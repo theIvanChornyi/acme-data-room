@@ -1,8 +1,10 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { createClient } from '@supabase/supabase-js';
+import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateDataRoomDto } from './dto/create-data-room.dto';
 import { CreateFolderDto } from './dto/create-folder.dto';
+import { CreatePublicShareDto } from './dto/create-public-share.dto';
 
 @Injectable()
 export class DataRoomsService {
@@ -35,6 +37,72 @@ export class DataRoomsService {
 
   async contents(roomId: string, ownerId: string, folderId?: string) {
     await this.assertOwner(roomId, ownerId);
+    return this.roomContents(roomId, folderId);
+  }
+
+  async listPublicShares(roomId: string, ownerId: string, dto: CreatePublicShareDto) {
+    await this.assertOwner(roomId, ownerId);
+    return this.prisma.share.findMany({
+      where: { dataRoomId: roomId, ...this.shareTargetWhere(dto), accessType: 'PUBLIC_LINK', revokedAt: null },
+      select: { id: true, token: true, description: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async createPublicShare(roomId: string, ownerId: string, dto: CreatePublicShareDto) {
+    await this.assertOwner(roomId, ownerId);
+    await this.assertShareTarget(roomId, dto);
+    return this.prisma.share.create({
+      data: { dataRoomId: roomId, targetType: dto.targetType, accessType: 'PUBLIC_LINK', role: 'VIEWER', token: randomBytes(32).toString('base64url'), description: dto.description?.trim() || null, folderId: dto.targetType === 'FOLDER' ? dto.folderId : null, fileId: dto.targetType === 'FILE' ? dto.fileId : null },
+      select: { id: true, token: true, description: true, createdAt: true },
+    });
+  }
+
+  async revokePublicShare(roomId: string, ownerId: string, shareId: string) {
+    await this.assertOwner(roomId, ownerId);
+    const share = await this.prisma.share.findFirst({ where: { id: shareId, dataRoomId: roomId, accessType: 'PUBLIC_LINK', revokedAt: null } });
+    if (!share) throw new NotFoundException('Public link not found');
+    await this.prisma.share.update({ where: { id: shareId }, data: { revokedAt: new Date() } });
+    return { revoked: true };
+  }
+
+  async publicContents(token: string, folderId?: string) {
+    const share = await this.activePublicShare(token);
+    if (share.targetType === 'FILE') {
+      if (!share.file) throw new NotFoundException('This shared file is unavailable');
+      return { room: { name: share.dataRoom.name, description: share.dataRoom.description }, shareDescription: share.description, scopeName: share.file.name, targetType: 'FILE', folder: null, breadcrumbs: [], items: [{ ...share.file, kind: 'file', sizeBytes: share.file.sizeBytes.toString() }] };
+    }
+    const sharedFolder = share.targetType === 'FOLDER' ? share.folder : null;
+    if (share.targetType === 'FOLDER' && !sharedFolder) throw new NotFoundException('This shared folder is unavailable');
+    const requestedFolderId = folderId ?? sharedFolder?.id;
+    if (sharedFolder && requestedFolderId) {
+      const requested = await this.prisma.folder.findFirst({ where: { id: requestedFolderId, dataRoomId: share.dataRoomId, path: { startsWith: sharedFolder.path } }, select: { id: true } });
+      if (!requested) throw new NotFoundException('This folder is outside the shared area');
+    }
+    const contents = await this.roomContents(share.dataRoomId, requestedFolderId);
+    const breadcrumbs = sharedFolder ? contents.breadcrumbs.slice(Math.max(contents.breadcrumbs.findIndex((crumb) => crumb.id === sharedFolder.id) + 1, 0)) : contents.breadcrumbs;
+    return { room: { name: share.dataRoom.name, description: share.dataRoom.description }, shareDescription: share.description, scopeName: sharedFolder?.name ?? share.dataRoom.name, targetType: share.targetType, ...contents, breadcrumbs };
+  }
+
+  async createPublicViewUrl(token: string, fileId: string) {
+    const share = await this.activePublicShare(token);
+    if (share.targetType === 'FILE' && share.fileId !== fileId) throw new NotFoundException('File not found');
+    const where = share.targetType === 'FOLDER' && share.folder ? { id: fileId, dataRoomId: share.dataRoomId, folder: { path: { startsWith: share.folder.path } } } : { id: fileId, dataRoomId: share.dataRoomId };
+    const file = await this.prisma.file.findFirst({ where });
+    if (!file) throw new NotFoundException('File not found');
+    return this.createStorageUrl(file.storagePath);
+  }
+
+  async createPublicDownloadUrl(token: string, fileId: string) {
+    const share = await this.activePublicShare(token);
+    if (share.targetType === 'FILE' && share.fileId !== fileId) throw new NotFoundException('File not found');
+    const where = share.targetType === 'FOLDER' && share.folder ? { id: fileId, dataRoomId: share.dataRoomId, folder: { path: { startsWith: share.folder.path } } } : { id: fileId, dataRoomId: share.dataRoomId };
+    const file = await this.prisma.file.findFirst({ where });
+    if (!file) throw new NotFoundException('File not found');
+    return this.createStorageUrl(file.storagePath, true);
+  }
+
+  private async roomContents(roomId: string, folderId?: string) {
     let folder: { id: string; name: string; parentId: string | null; path: string } | null = null;
     if (folderId) {
       folder = await this.prisma.folder.findFirst({ where: { id: folderId, dataRoomId: roomId }, select: { id: true, name: true, parentId: true, path: true } });
@@ -154,9 +222,14 @@ export class DataRoomsService {
     await this.assertOwner(roomId, ownerId);
     const file = await this.prisma.file.findFirst({ where: { id: fileId, dataRoomId: roomId } });
     if (!file) throw new NotFoundException('File not found');
-    const { data, error } = await this.storage().storage.from(this.storageBucket).createSignedUrl(file.storagePath, 10 * 60);
-    if (error || !data) throw new NotFoundException('The stored file is no longer available');
-    return { url: data.signedUrl, expiresIn: 600 };
+    return this.createStorageUrl(file.storagePath);
+  }
+
+  async createDownloadUrl(roomId: string, ownerId: string, fileId: string) {
+    await this.assertOwner(roomId, ownerId);
+    const file = await this.prisma.file.findFirst({ where: { id: fileId, dataRoomId: roomId } });
+    if (!file) throw new NotFoundException('File not found');
+    return this.createStorageUrl(file.storagePath, true);
   }
 
   async renameFile(roomId: string, ownerId: string, fileId: string, name: string) {
@@ -224,6 +297,41 @@ export class DataRoomsService {
     return room;
   }
 
+  private shareTargetWhere(dto: CreatePublicShareDto) {
+    if (dto.targetType === 'DATA_ROOM') return { targetType: 'DATA_ROOM' as const, folderId: null, fileId: null };
+    if (dto.targetType === 'FOLDER') return { targetType: 'FOLDER' as const, folderId: dto.folderId ?? '', fileId: null };
+    return { targetType: 'FILE' as const, folderId: null, fileId: dto.fileId ?? '' };
+  }
+
+  private async assertShareTarget(roomId: string, dto: CreatePublicShareDto) {
+    if (dto.targetType === 'DATA_ROOM') {
+      if (dto.folderId || dto.fileId) throw new BadRequestException('A Data Room share cannot include a folder or file');
+      return;
+    }
+    if (dto.targetType === 'FOLDER') {
+      if (!dto.folderId || dto.fileId) throw new BadRequestException('Choose one folder to share');
+      const folder = await this.prisma.folder.findFirst({ where: { id: dto.folderId, dataRoomId: roomId }, select: { id: true } });
+      if (!folder) throw new NotFoundException('Folder not found');
+      return;
+    }
+    if (!dto.fileId || dto.folderId) throw new BadRequestException('Choose one file to share');
+    const file = await this.prisma.file.findFirst({ where: { id: dto.fileId, dataRoomId: roomId }, select: { id: true } });
+    if (!file) throw new NotFoundException('File not found');
+  }
+
+  private async activePublicShare(token: string) {
+    const share = await this.prisma.share.findFirst({
+      where: { token, accessType: 'PUBLIC_LINK', revokedAt: null, OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] },
+      include: {
+        dataRoom: { select: { name: true, description: true } },
+        folder: { select: { id: true, name: true, path: true } },
+        file: { select: { id: true, name: true, storagePath: true, mimeType: true, sizeBytes: true, createdAt: true, updatedAt: true, folderId: true } },
+      },
+    });
+    if (!share) throw new NotFoundException('This shared link is unavailable or has been revoked');
+    return share;
+  }
+
   private async breadcrumbs(roomId: string, folder: { id: string; name: string; parentId: string | null; path: string }) {
     const ids = folder.path.split('/').filter(Boolean);
     return this.prisma.folder.findMany({ where: { id: { in: ids }, dataRoomId: roomId }, select: { id: true, name: true } }).then((rows) => ids.map((id) => rows.find((row) => row.id === id)).filter((row): row is { id: string; name: string } => Boolean(row)));
@@ -234,6 +342,12 @@ export class DataRoomsService {
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
     if (!url || !key) throw new InternalServerErrorException('Supabase storage is not configured');
     return createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
+  }
+
+  private async createStorageUrl(storagePath: string, download = false) {
+    const { data, error } = await this.storage().storage.from(this.storageBucket).createSignedUrl(storagePath, 10 * 60, download ? { download: true } : undefined);
+    if (error || !data) throw new NotFoundException('The stored file is no longer available');
+    return { url: data.signedUrl, expiresIn: 600 };
   }
 
   private async ensureBucket() {

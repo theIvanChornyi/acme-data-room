@@ -101,6 +101,7 @@ model Share {
   accessType  ShareAccessType
   recipientId String?
   token       String?         @unique
+  description String?
   role        ShareRole       @default(VIEWER)
   expiresAt   DateTime?
   revokedAt   DateTime?
