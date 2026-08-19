@@ -61,7 +61,7 @@ Permissioned sharing can be granted to any email address. If the recipient has n
 
 ## Deployment
 
-Deploy `apps/web` to Vercel and `apps/api` to a Node-capable host such as Railway, Render, or Fly.io.
+Deploy `apps/web` and `apps/api` as separate Vercel projects. Vercel runs the NestJS API as a Node function.
 
 1. Configure the API with `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `DATABASE_URL`, `DIRECT_URL`, `PORT`, and `WEB_ORIGIN=https://<your-web-domain>`.
 2. Configure the web app with `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and `VITE_API_URL=https://<your-api-domain>/api`.
@@ -70,6 +70,14 @@ Deploy `apps/web` to Vercel and `apps/api` to a Node-capable host such as Railwa
 5. Generate a long random `UPLOAD_CLEANUP_SECRET`, set it on the API host, replace the two placeholders in [`supabase/migrations/0002_schedule_expired_upload_cleanup.sql`](supabase/migrations/0002_schedule_expired_upload_cleanup.sql), then run that script in the Supabase SQL editor. It stores the API URL and secret in Vault and uses Supabase Cron plus `pg_net` to invoke the cleanup every hour.
 
 The resulting job is named `cleanup-expired-uploads`. Monitor its scheduling in **Integrations → Cron** and inspect the HTTP response from `pg_net` in the SQL editor when investigating a failed run.
+
+### Vercel automation and environment variables
+
+The deployed projects are `acme-data-room-web` (root directory `apps/web`) and `acme-data-room-api` (root directory `apps/api`). Connect each project to this GitHub repository through **Settings → Git**. Vercel then creates a production deployment for every push to `main` and preview deployments for other branches and pull requests.
+
+Keep secrets in **Vercel Project Settings → Environment Variables**, scoped to Production (and Preview only when a working preview is needed). Do not commit them, store them in a script, or duplicate them as GitHub Actions secrets. The API needs `SUPABASE_SERVICE_ROLE_KEY`, `DATABASE_URL`, `DIRECT_URL`, and `UPLOAD_CLEANUP_SECRET` as sensitive variables; `SUPABASE_URL` and `WEB_ORIGIN` are runtime configuration. The frontend's `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and `VITE_API_URL` are intentionally public build-time configuration — never place a service-role key in a `VITE_*` variable.
+
+GitHub Actions secrets such as `VERCEL_TOKEN`, `VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID` are needed only if replacing Vercel Git Integration with a custom GitHub Actions deployment workflow.
 
 ## Design decisions
 
