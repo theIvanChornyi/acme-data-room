@@ -26,3 +26,32 @@ export interface FolderContents {
   items: RoomItem[];
   nextCursor: string | null;
 }
+
+export interface PublicShare {
+  id: string;
+  token: string;
+  description: string | null;
+  createdAt: string;
+}
+
+export interface PublicShareContents extends FolderContents {
+  room: { name: string; description: string | null };
+  shareDescription: string | null;
+  scopeName: string;
+  targetType: 'DATA_ROOM' | 'FOLDER' | 'FILE';
+}
+
+export interface UserShare {
+  id: string;
+  email: string;
+  createdAt: string;
+}
+
+export interface ReceivedShare {
+  id: string;
+  targetType: 'DATA_ROOM' | 'FOLDER' | 'FILE';
+  targetName: string;
+  roomName: string;
+  sharedBy: string;
+  createdAt: string;
+}

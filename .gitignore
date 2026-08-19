@@ -6,3 +6,4 @@ dist
 coverage
 *.tsbuildinfo
 apps/api/src/generated
+supabase/.temp

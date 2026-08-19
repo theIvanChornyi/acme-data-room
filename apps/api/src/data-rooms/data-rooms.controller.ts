@@ -8,6 +8,8 @@ import { UploadFilesDto } from './dto/upload-files.dto';
 import { MoveFileDto } from './dto/move-file.dto';
 import { RenameItemDto } from './dto/rename-item.dto';
 import { MoveFileToRoomDto } from './dto/move-file-to-room.dto';
+import { CreatePublicShareDto } from './dto/create-public-share.dto';
+import { GrantUserShareDto } from './dto/grant-user-share.dto';
 import { DataRoomsService } from './data-rooms.service';
 
 @Controller('data-rooms')
@@ -27,6 +29,36 @@ export class DataRoomsController {
 
   @Get(':roomId/contents')
   contents(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Query('folderId') folderId?: string) { return this.dataRooms.contents(roomId, user.id, folderId); }
+
+  @Get(':roomId/shares/public')
+  listPublicShares(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Query() dto: CreatePublicShareDto) { return this.dataRooms.listPublicShares(roomId, user.id, dto); }
+
+  @Post(':roomId/shares/public')
+  createPublicShare(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Body() dto: CreatePublicShareDto) { return this.dataRooms.createPublicShare(roomId, user.id, dto); }
+
+  @Delete(':roomId/shares/public/:shareId')
+  revokePublicShare(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Param('shareId') shareId: string) { return this.dataRooms.revokePublicShare(roomId, user.id, shareId); }
+
+  @Get(':roomId/shares/users')
+  listUserShares(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Query() dto: CreatePublicShareDto) { return this.dataRooms.listUserShares(roomId, user.id, dto); }
+
+  @Post(':roomId/shares/users')
+  grantUserShare(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Body() dto: GrantUserShareDto) { return this.dataRooms.grantUserShare(roomId, user.id, dto); }
+
+  @Delete(':roomId/shares/users/:shareId')
+  revokeUserShare(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Param('shareId') shareId: string) { return this.dataRooms.revokeUserShare(roomId, user.id, shareId); }
+
+  @Get('shared-with-me')
+  sharedWithMe(@CurrentUser() user: AuthenticatedUser) { return this.dataRooms.sharedWithMe(user.id); }
+
+  @Get('shared-with-me/:shareId/contents')
+  sharedWithMeContents(@CurrentUser() user: AuthenticatedUser, @Param('shareId') shareId: string, @Query('folderId') folderId?: string) { return this.dataRooms.userShareContents(shareId, user.id, folderId); }
+
+  @Get('shared-with-me/:shareId/files/:fileId/view')
+  sharedWithMeView(@CurrentUser() user: AuthenticatedUser, @Param('shareId') shareId: string, @Param('fileId') fileId: string) { return this.dataRooms.createUserShareViewUrl(shareId, user.id, fileId); }
+
+  @Get('shared-with-me/:shareId/files/:fileId/download')
+  sharedWithMeDownload(@CurrentUser() user: AuthenticatedUser, @Param('shareId') shareId: string, @Param('fileId') fileId: string) { return this.dataRooms.createUserShareDownloadUrl(shareId, user.id, fileId); }
 
   @Post(':roomId/folders')
   createFolder(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Body() dto: CreateFolderDto) { return this.dataRooms.createFolder(roomId, user.id, dto); }
@@ -52,6 +84,11 @@ export class DataRoomsController {
   @Get(':roomId/files/:fileId/view')
   viewFile(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Param('fileId') fileId: string) {
     return this.dataRooms.createViewUrl(roomId, user.id, fileId);
+  }
+
+  @Get(':roomId/files/:fileId/download')
+  downloadFile(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Param('fileId') fileId: string) {
+    return this.dataRooms.createDownloadUrl(roomId, user.id, fileId);
   }
 
   @Patch(':roomId/files/:fileId')
