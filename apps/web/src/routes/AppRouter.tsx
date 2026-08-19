@@ -8,6 +8,7 @@ type AppRouterProps = {
   DashboardScreen: ComponentType;
   RoomScreen: ComponentType;
   SharedRoomScreen: ComponentType;
+  NotFoundScreen: ComponentType;
 };
 
 /** Keeps route declarations separate from screen implementation. */
@@ -17,6 +18,7 @@ export function AppRouter({
   DashboardScreen,
   RoomScreen,
   SharedRoomScreen,
+  NotFoundScreen,
 }: AppRouterProps) {
   return (
     <Routes>
@@ -25,18 +27,20 @@ export function AppRouter({
         <>
           <Route path={AppRoutes.dashboard} element={<DashboardScreen />} />
           <Route path={AppRoutes.roomPattern} element={<RoomScreen />} />
+          <Route path={AppRoutes.login} element={<Navigate to={AppRoutes.dashboard} replace />} />
           <Route
             path={AppRoutes.sharedWithMe}
             element={<Navigate to={AppRoutes.dashboard} replace />}
           />
           <Route path={AppRoutes.sharedWithMePattern} element={<SharedRoomScreen />} />
-          <Route
-            path={AppRoutes.fallback}
-            element={<Navigate to={AppRoutes.dashboard} replace />}
-          />
+          <Route path={AppRoutes.fallback} element={<NotFoundScreen />} />
         </>
       ) : (
-        <Route path={AppRoutes.fallback} element={<LoginScreen />} />
+        <>
+          <Route path={AppRoutes.dashboard} element={<LoginScreen />} />
+          <Route path={AppRoutes.login} element={<LoginScreen />} />
+          <Route path={AppRoutes.fallback} element={<NotFoundScreen />} />
+        </>
       )}
     </Routes>
   );

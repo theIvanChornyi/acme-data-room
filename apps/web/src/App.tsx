@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { GlobalActivityBar } from './components/GlobalActivityBar';
+import { NotFoundPage } from './components/FallbackPage';
 import { SharedRoom } from './components/SharedRoom';
 import { LoginPage } from './features/auth/LoginPage';
 import { DashboardPage } from './features/dashboard/DashboardPage';
@@ -35,6 +36,7 @@ export default function App() {
         DashboardScreen={DashboardPage}
         RoomScreen={RoomPage}
         SharedRoomScreen={SharedRoom}
+        NotFoundScreen={NotFoundPage}
       />
     </>
   );

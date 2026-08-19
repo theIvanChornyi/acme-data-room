@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { ShareTargetType, type PublicShareContents, type RoomItem } from '@acme/contracts';
 import { ArrowLeft, ChevronRight, FileText, Folder, ShieldCheck } from 'lucide-react';
 import { api } from '../lib/api';
+import { FallbackPage } from './FallbackPage';
 import { PdfViewerDialog } from './PdfViewerDialog';
 import { PageControls } from './PageControls';
 import { AppRoutes } from '../routes/app-routes';
@@ -85,8 +86,14 @@ export function SharedRoom() {
       setError(messageFrom(cause, WebMessages.sharing.downloadDocumentFailed));
     }
   };
-  if (!accessKey) return <SharedError message={WebMessages.sharing.invalidAccess} />;
-  if (error) return <SharedError message={error} />;
+  if (!accessKey)
+    return (
+      <FallbackPage
+        title="Shared Data Room unavailable"
+        message={WebMessages.sharing.invalidAccess}
+      />
+    );
+  if (error) return <FallbackPage title="Shared Data Room unavailable" message={error} />;
   if (!contents)
     return (
       <main className="grid min-h-screen place-items-center text-sm text-slate-500">
@@ -210,19 +217,5 @@ export function SharedRoom() {
         onDownload={downloadFile}
       />
     </>
-  );
-}
-
-function SharedError({ message }: { message: string }) {
-  return (
-    <main className="grid min-h-screen place-items-center p-6">
-      <section className="w-full max-w-md rounded-xl border bg-white p-8 text-center shadow-card">
-        <div className="mx-auto grid h-11 w-11 place-items-center rounded-xl bg-red-50 text-red-600">
-          <ShieldCheck size={22} />
-        </div>
-        <h1 className="mt-5 text-xl font-semibold">Shared Data Room unavailable</h1>
-        <p className="mt-2 text-sm leading-6 text-slate-500">{message}</p>
-      </section>
-    </main>
   );
 }

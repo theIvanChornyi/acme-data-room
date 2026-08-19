@@ -26,7 +26,7 @@ export const WebMessages = {
   },
   sharing: {
     invalidAccess: 'This shared access is invalid.',
-    unavailable: 'This shared access is unavailable.',
+    unavailable: 'This shared access is unavailable or may have been revoked by its owner.',
     openDocumentFailed: 'Unable to open this document.',
     downloadDocumentFailed: 'Unable to download this document.',
     loadSettingsFailed: 'Unable to load sharing settings.',
@@ -35,6 +35,9 @@ export const WebMessages = {
     copyLinkFailed: 'Unable to copy the link. Select it manually and copy it.',
     revokeLinkFailed: 'Unable to revoke this link.',
     revokeAccessFailed: 'Unable to revoke this access.',
+  },
+  navigation: {
+    notFound: 'The page you requested does not exist or is no longer available.',
   },
   dialogs: {
     nameRequired: 'Enter a name.',
