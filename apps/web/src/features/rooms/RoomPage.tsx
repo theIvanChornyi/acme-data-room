@@ -690,7 +690,7 @@ export function RoomPage() {
           )}
           <WorkspaceDropzone
             onFiles={startWorkspaceUpload}
-            showPrompt={!contents?.items.length && !searchIsActive}
+            showPrompt={!searchIsActive}
           >
             {actionError ? (
               <DismissibleError message={actionError} onClose={() => setActionError('')} />
