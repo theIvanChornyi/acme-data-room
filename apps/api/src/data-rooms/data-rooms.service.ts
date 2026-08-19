@@ -839,6 +839,8 @@ export class DataRoomsService {
     usedPaths: Set<string>,
   ) {
     archive.append('', { name: `${rootName}/` });
+    await this.appendFolderDirectories(archive, root, rootName);
+    const rootPathIds = this.pathIds(root.path);
     let afterId: string | undefined;
     do {
       const files = await this.prisma.file.findMany({
@@ -863,13 +865,41 @@ export class DataRoomsService {
       const folderNames = await this.folderNamesForPaths(files.flatMap((file) => this.pathIds(file.folder?.path)));
       for (const file of files) {
         const folderIds = this.pathIds(file.folder?.path);
-        const relativeFolderIds = folderIds.slice(this.pathIds(root.path).length);
+        const relativeFolderIds = folderIds.slice(rootPathIds.length);
         const relativeFolders = relativeFolderIds.map((id) => folderNames.get(id)).filter(Boolean);
         const path = [rootName, ...relativeFolders, file.name].join('/');
         await this.appendArchiveFile(archive, file, this.uniqueArchivePath(path, usedPaths));
       }
       afterId = files.at(-1)?.id;
     } while (afterId);
+  }
+
+  private async appendFolderDirectories(archive: Archiver, root: SelectedFolder, rootName: string) {
+    const rootPathIds = this.pathIds(root.path);
+    let afterPath: string | undefined;
+    do {
+      const folders = await this.prisma.folder.findMany({
+        where: {
+          dataRoomId: root.dataRoomId,
+          path: { startsWith: root.path, ...(afterPath ? { gt: afterPath } : {}) },
+        },
+        select: { path: true },
+        orderBy: { path: 'asc' },
+        take: DataRoomStorage.archive.batchSize,
+      });
+      if (!folders.length) break;
+      const folderNames = await this.folderNamesForPaths(folders.flatMap((folder) => this.pathIds(folder.path)));
+      for (const folder of folders) {
+        const relativeFolderIds = this.pathIds(folder.path).slice(rootPathIds.length);
+        if (!relativeFolderIds.length) continue;
+        const relativeFolders = relativeFolderIds
+          .map((id) => folderNames.get(id))
+          .filter((name): name is string => Boolean(name))
+          .map((name) => this.safeArchiveSegment(name));
+        archive.append('', { name: `${[rootName, ...relativeFolders].join('/')}/` });
+      }
+      afterPath = folders.at(-1)?.path;
+    } while (afterPath);
   }
 
   private async appendArchiveFile(
