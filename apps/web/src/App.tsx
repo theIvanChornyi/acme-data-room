@@ -776,7 +776,6 @@ function RoomPage() {
         <FolderTree
           rooms={rooms}
           rootFolders={rootFolders}
-          loadingRootFolders={rootFoldersQuery.isPending}
           activeRoomId={roomId}
           activeFolderId={folderId}
           expandedFolderIds={new Set(contents?.breadcrumbs.map((crumb) => crumb.id))}
@@ -912,7 +911,9 @@ function RoomPage() {
                 </p>
               )
             ) : contentsQuery.isPending ? (
-              <RoomContentsSkeleton />
+              <p className="rounded-lg border border-dashed bg-slate-50 p-5 text-sm text-slate-500">
+                Loading Data Room…
+              </p>
             ) : contents?.items.length ? (
               <>
                 <RoomContents

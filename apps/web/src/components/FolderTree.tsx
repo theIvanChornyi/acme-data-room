@@ -149,7 +149,6 @@ function FolderNode({
 export function FolderTree({
   rooms,
   rootFolders,
-  loadingRootFolders,
   activeRoomId,
   activeFolderId,
   expandedFolderIds,
@@ -163,7 +162,6 @@ export function FolderTree({
 }: {
   rooms: DataRoomSummary[];
   rootFolders: TreeFolder[];
-  loadingRootFolders: boolean;
   activeRoomId: string;
   activeFolderId?: string;
   expandedFolderIds: Set<string>;
@@ -239,27 +237,19 @@ export function FolderTree({
               </div>
               {activeRoomId === room.id && (
                 <div>
-                  {loadingRootFolders ? (
-                    <div aria-label="Loading folders" className="space-y-2 px-3 py-2">
-                      <div className="h-4 w-4/5 animate-pulse rounded bg-slate-100" />
-                      <div className="h-4 w-3/5 animate-pulse rounded bg-slate-100" />
-                      <div className="h-4 w-2/3 animate-pulse rounded bg-slate-100" />
-                    </div>
-                  ) : (
-                    rootFolders.map((folder) => (
-                      <FolderNode
-                        key={folder.id}
-                        roomId={room.id}
-                        folder={folder}
-                        activeFolderId={activeFolderId}
-                        expandedFolderIds={expandedFolderIds}
-                        draggedFileId={draggedFileId}
-                        onSelectFolder={onSelectFolder}
-                        onDropFile={onDropFile}
-                        onCreateFolder={onCreateFolder}
-                      />
-                    ))
-                  )}
+                  {rootFolders.map((folder) => (
+                    <FolderNode
+                      key={folder.id}
+                      roomId={room.id}
+                      folder={folder}
+                      activeFolderId={activeFolderId}
+                      expandedFolderIds={expandedFolderIds}
+                      draggedFileId={draggedFileId}
+                      onSelectFolder={onSelectFolder}
+                      onDropFile={onDropFile}
+                      onCreateFolder={onCreateFolder}
+                    />
+                  ))}
                 </div>
               )}
             </div>
