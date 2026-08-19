@@ -34,6 +34,7 @@ model User {
 
   dataRooms DataRoom[]
   shares    Share[]    @relation("SharedWithUser")
+  uploadSessions UploadSession[]
 }
 
 model DataRoom {
@@ -48,6 +49,7 @@ model DataRoom {
   folders Folder[]
   files   File[]
   shares  Share[]
+  uploadSessions UploadSession[]
 
   @@index([ownerId, updatedAt])
 }
@@ -67,6 +69,7 @@ model Folder {
   children Folder[]  @relation("FolderTree")
   files    File[]
   shares   Share[]
+  uploadSessions UploadSession[]
 
   @@unique([dataRoomId, parentId, name])
   @@index([dataRoomId, parentId, name])
@@ -92,6 +95,25 @@ model File {
   @@unique([dataRoomId, folderId, name])
   @@index([dataRoomId, folderId, name])
   @@index([dataRoomId, folderId, name, id])
+}
+
+model UploadSession {
+  id          String   @id @default(uuid())
+  dataRoomId  String
+  folderId    String?
+  ownerId     String
+  name        String
+  storagePath String   @unique
+  sizeBytes   BigInt
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  dataRoom DataRoom @relation(fields: [dataRoomId], references: [id], onDelete: Cascade)
+  folder   Folder?   @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  owner    User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@index([ownerId, expiresAt])
+  @@index([dataRoomId, folderId])
 }
 
 model Share {

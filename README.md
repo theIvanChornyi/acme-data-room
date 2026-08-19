@@ -9,7 +9,7 @@ A full-stack virtual Data Room MVP for securely organizing, viewing, downloading
 | Web app | React, TypeScript, Vite, Tailwind CSS |
 | API | NestJS, Prisma |
 | Database | Supabase PostgreSQL |
-| Authentication | Supabase Auth with Google OAuth |
+| Authentication | Supabase Auth with Google OAuth and email/password |
 | File storage | Private Supabase Storage bucket |
 | Workspace | pnpm monorepo |
 
@@ -18,7 +18,7 @@ A full-stack virtual Data Room MVP for securely organizing, viewing, downloading
 - Google OAuth plus email/password sign-up and sign-in, with owner-isolated Data Rooms.
 - Create, rename, and delete Data Rooms.
 - Nested folders with breadcrumbs, a lazy-loaded collapsible tree sidebar, rename, deletion warning, subtree deletion, and cursor-paginated folder listings with page controls.
-- PDF uploads: picker or drag-and-drop, up to 10 files and 25 MB per file, individual upload progress, collision-safe names.
+- PDF uploads: picker or drag-and-drop, up to 10 files and 25 MB per file, direct-to-storage upload with individual progress, collision-safe names.
 - File preview inside the app, download, rename, delete, and drag-and-drop moves between folders or Data Rooms.
 - Public links for a Data Room, folder, or individual file; every link is read-only, supports an optional description, and can be revoked.
 - Permissioned read-only sharing for a specific Google account. The recipient sees shared items in **Shared with me** and has no access above a shared folder in the hierarchy.
@@ -69,7 +69,7 @@ Deploy `apps/web` to Vercel and `apps/api` to a Node-capable host such as Railwa
 ## Design decisions
 
 - **Authorization is server-side.** The API validates the Supabase access token before every owner or permissioned-share request, syncs only the authenticated user ID/email, and derives access from a non-revoked `Share` row.
-- **Private storage.** PDFs are stored in a private bucket. The API—not the browser—authorizes access and returns a short-lived signed URL only for an allowed file.
+- **Private storage and uploads.** PDFs stay in a private bucket. The API authorizes access and returns short-lived view/download URLs only for allowed files. For uploads, it creates a one-file signed upload URL after checking ownership, folder, file name, and size; the browser sends the bytes directly to Storage and the API verifies the stored object before publishing its `File` record. This avoids buffering files in the API while retaining per-file browser progress.
 - **Scoping.** A share targets one Data Room, folder, or file. Folder access is checked with the shared folder’s materialized `path`, so a recipient can traverse descendants but never parents or siblings.
 - **Names.** Folder names are unique within a parent. File collisions resolve to the next available suffix on upload, rename, and move.
 - **Revocation.** Revoking sets `revokedAt`; all permissioned and public read endpoints check it before returning metadata or a signed file URL.
@@ -81,17 +81,21 @@ erDiagram
   User ||--o{ DataRoom : owns
   DataRoom ||--o{ Folder : contains
   DataRoom ||--o{ File : contains
+  DataRoom ||--o{ UploadSession : stages
   Folder ||--o{ Folder : nests
   Folder ||--o{ File : contains
+  Folder ||--o{ UploadSession : stages
   DataRoom ||--o{ Share : has
   Folder ||--o{ Share : targets
   File ||--o{ Share : targets
   User ||--o{ Share : receives
+  User ||--o{ UploadSession : starts
 
   User { string id PK string email }
   DataRoom { string id PK string ownerId FK string name }
   Folder { string id PK string parentId FK string path int depth }
   File { string id PK string folderId FK string storagePath bigint sizeBytes }
+  UploadSession { string id PK string folderId FK string storagePath bigint sizeBytes datetime expiresAt }
   Share { string id PK string targetType string accessType string recipientId FK string recipientEmail string token string role string description datetime revokedAt }
 ```
 

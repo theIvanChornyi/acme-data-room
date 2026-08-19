@@ -2,6 +2,7 @@ import type { DataRoomSummary, FolderContents, PublicShare, PublicShareContents,
 import { supabase } from './supabase';
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3000/api';
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 export type PublicShareTarget = { targetType: 'DATA_ROOM' } | { targetType: 'FOLDER'; folderId: string } | { targetType: 'FILE'; fileId: string };
 
@@ -35,6 +36,29 @@ function contentsQuery(folderId?: string, cursor?: string) {
   return serialized ? `?${serialized}` : '';
 }
 
+function uploadToSignedUrl(signedUrl: string, file: File, onProgress: (loaded: number, total: number) => void) {
+  return new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', signedUrl);
+    xhr.setRequestHeader('Content-Type', 'application/pdf');
+    xhr.setRequestHeader('cache-control', 'max-age=3600');
+    xhr.setRequestHeader('x-upsert', 'false');
+    if (SUPABASE_ANON_KEY) xhr.setRequestHeader('apikey', SUPABASE_ANON_KEY);
+    xhr.upload.onprogress = (event) => { if (event.lengthComputable) onProgress(event.loaded, event.total); };
+    xhr.onerror = () => reject(new Error('Upload interrupted. Check your connection and try again.'));
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress(file.size, file.size);
+        resolve();
+        return;
+      }
+      const response = JSON.parse(xhr.responseText || '{}') as { message?: string; error?: string };
+      reject(new Error(response.message ?? response.error ?? 'Unable to upload the file to private storage.'));
+    };
+    xhr.send(file);
+  });
+}
+
 export const api = {
   rooms: () => request<DataRoomSummary[]>('/data-rooms'),
   createRoom: (name: string, description?: string) => request<DataRoomSummary>('/data-rooms', { method: 'POST', body: JSON.stringify({ name, description }) }),
@@ -54,24 +78,19 @@ export const api = {
   folderDeletionSummary: (roomId: string, folderId: string) => request<{ folders: number; files: number; sizeBytes: string }>(`/data-rooms/${roomId}/folders/${folderId}/deletion-summary`),
   deleteFolder: (roomId: string, folderId: string) => request(`/data-rooms/${roomId}/folders/${folderId}`, { method: 'DELETE' }),
   uploadFile: async (roomId: string, folderId: string | undefined, file: File, onProgress: (loaded: number, total: number) => void) => {
-    const { data } = await supabase?.auth.getSession() ?? { data: { session: null } };
-    if (!data.session?.access_token) throw new Error('Your session has expired. Please sign in again.');
-    return new Promise<RoomItem>((resolve, reject) => {
-      const form = new FormData();
-      form.append('files', file);
-      if (folderId) form.append('folderId', folderId);
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', `${API_URL}/data-rooms/${roomId}/files`);
-      xhr.setRequestHeader('Authorization', `Bearer ${data.session.access_token}`);
-      xhr.upload.onprogress = (event) => { if (event.lengthComputable) onProgress(event.loaded, event.total); };
-      xhr.onerror = () => reject(new Error('Upload interrupted. Check your connection and try again.'));
-      xhr.onload = () => {
-        const payload = JSON.parse(xhr.responseText || '{}') as RoomItem[] | { message?: string };
-        if (xhr.status >= 200 && xhr.status < 300 && Array.isArray(payload) && payload[0]) resolve(payload[0]);
-        else reject(new Error(Array.isArray(payload) ? 'Unable to upload files.' : payload.message ?? 'Unable to upload files.'));
-      };
-      xhr.send(form);
+    const header = new TextDecoder().decode(await file.slice(0, 4).arrayBuffer());
+    if (!file.name.toLowerCase().endsWith('.pdf') || header !== '%PDF') throw new Error('Choose a valid PDF file.');
+    const upload = await request<{ uploadId: string; signedUrl: string }>(`/data-rooms/${roomId}/files/upload-url`, {
+      method: 'POST',
+      body: JSON.stringify({ folderId, name: file.name, sizeBytes: file.size }),
     });
+    try {
+      await uploadToSignedUrl(upload.signedUrl, file, onProgress);
+      return request<RoomItem>(`/data-rooms/${roomId}/files/complete-upload`, { method: 'POST', body: JSON.stringify({ uploadId: upload.uploadId }) });
+    } catch (error) {
+      void request(`/data-rooms/${roomId}/files/uploads/${upload.uploadId}`, { method: 'DELETE' }).catch(() => undefined);
+      throw error;
+    }
   },
   viewFile: (roomId: string, fileId: string) => request<{ url: string }>(`/data-rooms/${roomId}/files/${fileId}/view`),
   downloadFile: (roomId: string, fileId: string) => request<{ url: string }>(`/data-rooms/${roomId}/files/${fileId}/download`),

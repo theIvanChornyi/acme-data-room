@@ -1,10 +1,10 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UploadedFiles, UseGuards, UseInterceptors } from '@nestjs/common';
-import { FilesInterceptor } from '@nestjs/platform-express';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { CurrentUser, AuthenticatedUser } from '../auth/current-user.decorator';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { CreateDataRoomDto } from './dto/create-data-room.dto';
 import { CreateFolderDto } from './dto/create-folder.dto';
-import { UploadFilesDto } from './dto/upload-files.dto';
+import { CreateUploadUrlDto } from './dto/create-upload-url.dto';
+import { CompleteUploadDto } from './dto/complete-upload.dto';
 import { MoveFileDto } from './dto/move-file.dto';
 import { RenameItemDto } from './dto/rename-item.dto';
 import { MoveFileToRoomDto } from './dto/move-file-to-room.dto';
@@ -80,10 +80,19 @@ export class DataRoomsController {
   @Delete(':roomId/folders/:folderId')
   deleteFolder(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Param('folderId') folderId: string) { return this.dataRooms.deleteFolder(roomId, user.id, folderId); }
 
-  @Post(':roomId/files')
-  @UseInterceptors(FilesInterceptor('files', 10, { limits: { fileSize: 25 * 1024 * 1024 } }))
-  uploadFiles(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Body() dto: UploadFilesDto, @UploadedFiles() files: UploadFile[] = []) {
-    return this.dataRooms.uploadFiles(roomId, user.id, dto.folderId, files);
+  @Post(':roomId/files/upload-url')
+  createUploadUrl(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Body() dto: CreateUploadUrlDto) {
+    return this.dataRooms.createUploadUrl(roomId, user.id, dto);
+  }
+
+  @Post(':roomId/files/complete-upload')
+  completeUpload(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Body() dto: CompleteUploadDto) {
+    return this.dataRooms.completeUpload(roomId, user.id, dto.uploadId);
+  }
+
+  @Delete(':roomId/files/uploads/:uploadId')
+  cancelUpload(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Param('uploadId') uploadId: string) {
+    return this.dataRooms.cancelUpload(roomId, user.id, uploadId);
   }
 
   @Get(':roomId/files/:fileId/view')
@@ -107,11 +116,4 @@ export class DataRoomsController {
 
   @Delete(':roomId/files/:fileId')
   deleteFile(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Param('fileId') fileId: string) { return this.dataRooms.deleteFile(roomId, user.id, fileId); }
-}
-
-interface UploadFile {
-  originalname: string;
-  mimetype: string;
-  size: number;
-  buffer: Buffer;
 }

@@ -7,6 +7,7 @@ import { CreateFolderDto } from './dto/create-folder.dto';
 import { CreatePublicShareDto } from './dto/create-public-share.dto';
 import { GrantUserShareDto } from './dto/grant-user-share.dto';
 import { ContentsQueryDto } from './dto/contents-query.dto';
+import { CreateUploadUrlDto } from './dto/create-upload-url.dto';
 
 @Injectable()
 export class DataRoomsService {
@@ -31,8 +32,11 @@ export class DataRoomsService {
 
   async deleteRoom(roomId: string, ownerId: string) {
     await this.assertOwner(roomId, ownerId);
-    const files = await this.prisma.file.findMany({ where: { dataRoomId: roomId }, select: { storagePath: true } });
-    await this.removeStorageObjects(files.map((file) => file.storagePath));
+    const [files, uploads] = await this.prisma.$transaction([
+      this.prisma.file.findMany({ where: { dataRoomId: roomId }, select: { storagePath: true } }),
+      this.prisma.uploadSession.findMany({ where: { dataRoomId: roomId }, select: { storagePath: true } }),
+    ]);
+    await this.removeStorageObjects([...files, ...uploads].map((item) => item.storagePath));
     await this.prisma.dataRoom.delete({ where: { id: roomId } });
     return { deleted: { files: files.length } };
   }
@@ -253,8 +257,12 @@ export class DataRoomsService {
     const folder = await this.prisma.folder.findFirst({ where: { id: folderId, dataRoomId: roomId } });
     if (!folder) throw new NotFoundException('Folder not found');
     const folders = await this.prisma.folder.findMany({ where: { dataRoomId: roomId, path: { startsWith: folder.path } }, select: { id: true } });
-    const files = await this.prisma.file.findMany({ where: { dataRoomId: roomId, folderId: { in: folders.map((item) => item.id) } }, select: { id: true, storagePath: true } });
-    await this.removeStorageObjects(files.map((file) => file.storagePath));
+    const folderIds = folders.map((item) => item.id);
+    const [files, uploads] = await this.prisma.$transaction([
+      this.prisma.file.findMany({ where: { dataRoomId: roomId, folderId: { in: folderIds } }, select: { id: true, storagePath: true } }),
+      this.prisma.uploadSession.findMany({ where: { dataRoomId: roomId, folderId: { in: folderIds } }, select: { storagePath: true } }),
+    ]);
+    await this.removeStorageObjects([...files, ...uploads].map((item) => item.storagePath));
     await this.prisma.$transaction([
       this.prisma.file.deleteMany({ where: { id: { in: files.map((file) => file.id) } } }),
       this.prisma.folder.delete({ where: { id: folder.id } }),
@@ -263,39 +271,70 @@ export class DataRoomsService {
     return { deleted: { folders: folders.length, files: files.length } };
   }
 
-  async uploadFiles(roomId: string, ownerId: string, folderId: string | undefined, files: UploadFile[]) {
+  async createUploadUrl(roomId: string, ownerId: string, dto: CreateUploadUrlDto) {
     await this.assertOwner(roomId, ownerId);
-    if (!files.length) throw new BadRequestException('Choose at least one PDF to upload');
-    if (files.length > 10) throw new BadRequestException('You can upload up to 10 files at once');
-    if (folderId) {
-      const folder = await this.prisma.folder.findFirst({ where: { id: folderId, dataRoomId: roomId } });
+    const name = this.validateUploadCandidate(dto.name, dto.sizeBytes);
+    if (dto.folderId) {
+      const folder = await this.prisma.folder.findFirst({ where: { id: dto.folderId, dataRoomId: roomId } });
       if (!folder) throw new NotFoundException('Folder not found');
     }
     await this.ensureBucket();
-    let pendingStoragePath: string | undefined;
+    const uploadId = crypto.randomUUID();
+    const storagePath = `${roomId}/${dto.folderId ?? 'root'}/${uploadId}.pdf`;
+    const expiresAt = new Date(Date.now() + 2 * 60 * 60 * 1000);
+    await this.prisma.uploadSession.create({
+      data: { id: uploadId, dataRoomId: roomId, folderId: dto.folderId ?? null, ownerId, name, storagePath, sizeBytes: BigInt(dto.sizeBytes), expiresAt },
+    });
     try {
-      const result = [];
-      for (const file of files) {
-        this.assertPdf(file);
-        const id = crypto.randomUUID();
-        const storagePath = `${roomId}/${folderId ?? 'root'}/${id}.pdf`;
-        const { error: uploadError } = await this.storage().storage.from(this.storageBucket).upload(storagePath, file.buffer, {
-          contentType: 'application/pdf',
-          upsert: false,
-        });
-        if (uploadError) throw new InternalServerErrorException('Unable to upload file to storage');
-        pendingStoragePath = storagePath;
-        const created = await this.withAvailableFileName(roomId, folderId, this.cleanFileName(file.originalname), undefined, (name) => this.prisma.file.create({
-          data: { id, dataRoomId: roomId, folderId: folderId ?? null, name, storagePath, mimeType: 'application/pdf', sizeBytes: BigInt(file.size) },
-        }));
-        result.push({ ...created, sizeBytes: created.sizeBytes.toString() });
-        pendingStoragePath = undefined;
-      }
-      return result;
+      const { data, error } = await this.storage().storage.from(this.storageBucket).createSignedUploadUrl(storagePath);
+      if (error || !data) throw new InternalServerErrorException('Unable to prepare file upload');
+      return { uploadId, signedUrl: data.signedUrl, expiresAt: expiresAt.toISOString() };
     } catch (error) {
-      if (pendingStoragePath) await this.storage().storage.from(this.storageBucket).remove([pendingStoragePath]);
+      await this.prisma.uploadSession.delete({ where: { id: uploadId } }).catch(() => undefined);
       throw error;
     }
+  }
+
+  async completeUpload(roomId: string, ownerId: string, uploadId: string) {
+    const completed = await this.prisma.file.findFirst({ where: { id: uploadId, dataRoomId: roomId }, select: { id: true, name: true, folderId: true, mimeType: true, sizeBytes: true, createdAt: true, updatedAt: true } });
+    if (completed) return this.serializeFile(completed);
+
+    const upload = await this.prisma.uploadSession.findFirst({ where: { id: uploadId, dataRoomId: roomId, ownerId } });
+    if (!upload) throw new NotFoundException('Upload was not found. Start the upload again.');
+    if (upload.expiresAt <= new Date()) {
+      await this.discardUpload(upload);
+      throw new BadRequestException('Upload link has expired. Start the upload again.');
+    }
+
+    const { data: storedFile, error } = await this.storage().storage.from(this.storageBucket).info(upload.storagePath);
+    const expectedSize = Number(upload.sizeBytes);
+    const isPdf = storedFile?.contentType?.split(';')[0].toLowerCase() === 'application/pdf';
+    if (error || !storedFile || storedFile.size !== expectedSize || !isPdf) {
+      await this.discardUpload(upload);
+      throw new BadRequestException('The uploaded file could not be verified. Choose a PDF and try again.');
+    }
+
+    try {
+      const created = await this.withAvailableFileName(roomId, upload.folderId, upload.name, undefined, (name) => this.prisma.$transaction(async (transaction) => {
+        await transaction.uploadSession.delete({ where: { id: upload.id } });
+        return transaction.file.create({
+          data: { id: upload.id, dataRoomId: roomId, folderId: upload.folderId, name, storagePath: upload.storagePath, mimeType: 'application/pdf', sizeBytes: upload.sizeBytes },
+        });
+      }));
+      await this.touchRoom(roomId);
+      return this.serializeFile(created);
+    } catch (error) {
+      const alreadyCompleted = await this.prisma.file.findFirst({ where: { id: uploadId, dataRoomId: roomId }, select: { id: true, name: true, folderId: true, mimeType: true, sizeBytes: true, createdAt: true, updatedAt: true } });
+      if (alreadyCompleted) return this.serializeFile(alreadyCompleted);
+      throw error;
+    }
+  }
+
+  async cancelUpload(roomId: string, ownerId: string, uploadId: string) {
+    const upload = await this.prisma.uploadSession.findFirst({ where: { id: uploadId, dataRoomId: roomId, ownerId } });
+    if (!upload) return { deleted: false };
+    await this.discardUpload(upload);
+    return { deleted: true };
   }
 
   async createViewUrl(roomId: string, ownerId: string, fileId: string) {
@@ -525,10 +564,20 @@ export class DataRoomsService {
     }
   }
 
-  private assertPdf(file: UploadFile) {
-    const header = file.buffer.subarray(0, 4).toString('ascii');
-    if (!file.originalname.toLowerCase().endsWith('.pdf') || header !== '%PDF') throw new BadRequestException(`${file.originalname} is not a valid PDF`);
-    if (file.size > 25 * 1024 * 1024) throw new BadRequestException(`${file.originalname} exceeds the 25 MB limit`);
+  private validateUploadCandidate(name: string, sizeBytes: number) {
+    const cleaned = this.cleanFileName(name);
+    if (!cleaned.toLowerCase().endsWith('.pdf')) throw new BadRequestException('Only PDF files can be uploaded');
+    if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 1 || sizeBytes > 25 * 1024 * 1024) throw new BadRequestException(`${cleaned} exceeds the 25 MB limit`);
+    return cleaned;
+  }
+
+  private async discardUpload(upload: { id: string; storagePath: string }) {
+    await this.prisma.uploadSession.delete({ where: { id: upload.id } }).catch(() => undefined);
+    await this.removeStorageObjects([upload.storagePath]).catch(() => undefined);
+  }
+
+  private serializeFile(file: { id: string; name: string; folderId: string | null; mimeType: string; sizeBytes: bigint; createdAt: Date; updatedAt: Date }) {
+    return { ...file, parentId: file.folderId, kind: 'file' as const, sizeBytes: file.sizeBytes.toString() };
   }
 
   private cleanFileName(name: string) {
@@ -580,11 +629,4 @@ export class DataRoomsService {
   private touchRoom(roomId: string) {
     return this.prisma.dataRoom.update({ where: { id: roomId }, data: { updatedAt: new Date() } });
   }
-}
-
-interface UploadFile {
-  originalname: string;
-  mimetype: string;
-  size: number;
-  buffer: Buffer;
 }
