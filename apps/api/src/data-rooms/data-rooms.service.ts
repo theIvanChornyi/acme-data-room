@@ -910,22 +910,33 @@ export class DataRoomsService {
 
   private uniqueArchivePath(path: string, usedPaths: Set<string>) {
     const normalized =
-      path.replaceAll(/[\\/:*?"<>|]/g, '_').replace(/^\.+$/, 'selection') || 'selection';
+      path
+        .split('/')
+        .filter(Boolean)
+        .map((segment) => this.safeArchiveSegment(segment))
+        .join('/') || 'selection';
     let candidate = normalized;
     let count = 2;
     while (usedPaths.has(candidate.toLocaleLowerCase())) {
-      const dot = normalized.lastIndexOf('.');
-      const base = dot > 0 ? normalized.slice(0, dot) : normalized;
-      const extension = dot > 0 ? normalized.slice(dot) : '';
-      candidate = `${base} (${count})${extension}`;
+      const lastSlash = normalized.lastIndexOf('/');
+      const directory = lastSlash >= 0 ? normalized.slice(0, lastSlash + 1) : '';
+      const fileName = lastSlash >= 0 ? normalized.slice(lastSlash + 1) : normalized;
+      const dot = fileName.lastIndexOf('.');
+      const base = dot > 0 ? fileName.slice(0, dot) : fileName;
+      const extension = dot > 0 ? fileName.slice(dot) : '';
+      candidate = `${directory}${base} (${count})${extension}`;
       count += 1;
     }
     usedPaths.add(candidate.toLocaleLowerCase());
     return candidate;
   }
 
+  private safeArchiveSegment(name: string) {
+    return name.replaceAll(/[\\:*?"<>|]/g, '_').replace(/^\.+$/, 'selection').trim() || 'selection';
+  }
+
   private safeArchiveName(name: string) {
-    return name.replaceAll(/[\\/:*?"<>|]/g, '_').trim() || 'data-room-selection';
+    return this.safeArchiveSegment(name) || 'data-room-selection';
   }
 
   async createUploadUrl(roomId: string, ownerId: string, dto: CreateUploadUrlDto) {
