@@ -35,6 +35,7 @@ export function RoomContents({
   onDragFile,
   onDropFile,
   allowFileMoves = true,
+  allowCurrentFolderDrop = true,
 }: {
   items: RoomItem[];
   currentFolderId?: string;
@@ -47,6 +48,7 @@ export function RoomContents({
   onDragFile: (fileId: string | null) => void;
   onDropFile: (fileId: string, destinationId: string | null) => void;
   allowFileMoves?: boolean;
+  allowCurrentFolderDrop?: boolean;
 }) {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
@@ -78,10 +80,11 @@ export function RoomContents({
   return (
     <div
       onDragOver={(event) => {
-        if (allowFileMoves && draggedFileId) event.preventDefault();
+        if (allowFileMoves && allowCurrentFolderDrop && draggedFileId) event.preventDefault();
       }}
       onDrop={(event) => {
-        if (allowFileMoves && draggedFileId) dropOn(event, currentFolderId ?? null);
+        if (allowFileMoves && allowCurrentFolderDrop && draggedFileId)
+          dropOn(event, currentFolderId ?? null);
       }}
       className="overflow-visible rounded-xl border bg-white shadow-card"
     >

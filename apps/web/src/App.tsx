@@ -887,7 +887,7 @@ function RoomPage() {
                   </p>
                   <RoomContents
                     items={searchResults.items}
-                    draggedFileId={null}
+                    draggedFileId={draggedFileId}
                     onOpenFolder={selectFolder}
                     onOpenFile={openFile}
                     onAction={startAction}
@@ -895,7 +895,7 @@ function RoomPage() {
                     onDownload={(item) => void downloadFile(item)}
                     onDragFile={setDraggedFileId}
                     onDropFile={dropFile}
-                    allowFileMoves={false}
+                    allowCurrentFolderDrop={false}
                   />
                   <PageControls
                     pageIndex={searchPageIndex}
