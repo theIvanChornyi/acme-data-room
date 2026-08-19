@@ -1,18 +1,142 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import type { DataRoomSummary } from '@acme/contracts';
+import { messageFrom, WebMessages } from '../lib/messages';
 
-export function DataRoomDialog({ room, onClose, onSubmit }: { room: DataRoomSummary | undefined | null; onClose: () => void; onSubmit: (name: string, description: string) => Promise<void> }) {
-  const [name, setName] = useState(room?.name ?? ''); const [description, setDescription] = useState(room?.description ?? ''); const [error, setError] = useState(''); const [saving, setSaving] = useState(false);
-  useEffect(() => { setName(room?.name ?? ''); setDescription(room?.description ?? ''); setError(''); }, [room]);
+export function DataRoomDialog({
+  room,
+  onClose,
+  onSubmit,
+}: {
+  room: DataRoomSummary | undefined | null;
+  onClose: () => void;
+  onSubmit: (name: string, description: string) => Promise<void>;
+}) {
+  const [name, setName] = useState(room?.name ?? '');
+  const [description, setDescription] = useState(room?.description ?? '');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    setName(room?.name ?? '');
+    setDescription(room?.description ?? '');
+    setError('');
+  }, [room]);
   if (room === null) return null;
-  const submit = async (event: FormEvent) => { event.preventDefault(); if (!name.trim()) return setError('Enter a Data Room name.'); setSaving(true); try { await onSubmit(name.trim(), description.trim()); onClose(); } catch (cause) { setError(cause instanceof Error ? cause.message : 'Unable to save Data Room.'); } finally { setSaving(false); } };
-  return <div className="fixed inset-0 z-20 grid place-items-center bg-slate-950/30 p-4" role="dialog" aria-modal="true"><form onSubmit={submit} className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl"><h2 className="text-lg font-semibold">{room ? 'Edit Data Room' : 'New Data Room'}</h2><p className="mt-1 text-sm text-slate-500">{room ? 'Update its name and description.' : 'Create a secure place for deal documents.'}</p><label className="mt-5 block text-sm font-medium">Name<input autoFocus value={name} onChange={(event) => setName(event.target.value)} maxLength={120} className="mt-2 w-full rounded-lg border px-3 py-2 outline-none focus:border-brand focus:ring-2 focus:ring-blue-100" /></label><label className="mt-4 block text-sm font-medium">Description <span className="font-normal text-slate-400">(optional)</span><textarea value={description} onChange={(event) => setDescription(event.target.value)} maxLength={500} rows={3} className="mt-2 w-full resize-none rounded-lg border px-3 py-2 outline-none focus:border-brand focus:ring-2 focus:ring-blue-100" /></label>{error && <p className="mt-2 text-sm text-red-600">{error}</p>}<div className="mt-6 flex justify-end gap-3"><button type="button" onClick={onClose} disabled={saving} className="px-3 py-2 text-sm font-medium">Cancel</button><button disabled={saving} className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white disabled:opacity-50">{saving ? 'Saving…' : room ? 'Save changes' : 'Create Data Room'}</button></div></form></div>;
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!name.trim()) return setError(WebMessages.dialogs.roomNameRequired);
+    setSaving(true);
+    try {
+      await onSubmit(name.trim(), description.trim());
+      onClose();
+    } catch (cause) {
+      setError(messageFrom(cause, WebMessages.dialogs.saveRoomFailed));
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <div
+      className="fixed inset-0 z-20 grid place-items-center bg-slate-950/30 p-4"
+      role="dialog"
+      aria-modal="true"
+    >
+      <form onSubmit={submit} className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+        <h2 className="text-lg font-semibold">{room ? 'Edit Data Room' : 'New Data Room'}</h2>
+        <p className="mt-1 text-sm text-slate-500">
+          {room ? 'Update its name and description.' : 'Create a secure place for deal documents.'}
+        </p>
+        <label className="mt-5 block text-sm font-medium">
+          Name
+          <input
+            autoFocus
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            maxLength={120}
+            className="mt-2 w-full rounded-lg border px-3 py-2 outline-none focus:border-brand focus:ring-2 focus:ring-blue-100"
+          />
+        </label>
+        <label className="mt-4 block text-sm font-medium">
+          Description <span className="font-normal text-slate-400">(optional)</span>
+          <textarea
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            maxLength={500}
+            rows={3}
+            className="mt-2 w-full resize-none rounded-lg border px-3 py-2 outline-none focus:border-brand focus:ring-2 focus:ring-blue-100"
+          />
+        </label>
+        {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+        <div className="mt-6 flex justify-end gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className="px-3 py-2 text-sm font-medium"
+          >
+            Cancel
+          </button>
+          <button
+            disabled={saving}
+            className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+          >
+            {saving ? 'Saving…' : room ? 'Save changes' : 'Create Data Room'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
 }
 
-export function DeleteDataRoomDialog({ room, onClose, onDelete }: { room: DataRoomSummary | null; onClose: () => void; onDelete: () => Promise<void> }) {
-  const [deleting, setDeleting] = useState(false); const [error, setError] = useState('');
+export function DeleteDataRoomDialog({
+  room,
+  onClose,
+  onDelete,
+}: {
+  room: DataRoomSummary | null;
+  onClose: () => void;
+  onDelete: () => Promise<void>;
+}) {
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState('');
   useEffect(() => setError(''), [room]);
   if (!room) return null;
-  const remove = async () => { setDeleting(true); try { await onDelete(); onClose(); } catch (cause) { setError(cause instanceof Error ? cause.message : 'Unable to delete Data Room.'); } finally { setDeleting(false); } };
-  return <div className="fixed inset-0 z-20 grid place-items-center bg-slate-950/30 p-4" role="dialog" aria-modal="true"><section className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl"><h2 className="text-lg font-semibold">Delete Data Room?</h2><p className="mt-3 text-sm leading-6 text-slate-600"><span className="font-medium text-ink">{room.name}</span>, every nested folder, and every document will be permanently deleted. This cannot be undone.</p>{error && <p className="mt-3 text-sm text-red-600">{error}</p>}<div className="mt-6 flex justify-end gap-3"><button onClick={onClose} disabled={deleting} className="px-3 py-2 text-sm font-medium">Cancel</button><button onClick={remove} disabled={deleting} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">{deleting ? 'Deleting…' : 'Delete permanently'}</button></div></section></div>;
+  const remove = async () => {
+    setDeleting(true);
+    try {
+      await onDelete();
+      onClose();
+    } catch (cause) {
+      setError(messageFrom(cause, WebMessages.dialogs.deleteRoomFailed));
+    } finally {
+      setDeleting(false);
+    }
+  };
+  return (
+    <div
+      className="fixed inset-0 z-20 grid place-items-center bg-slate-950/30 p-4"
+      role="dialog"
+      aria-modal="true"
+    >
+      <section className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+        <h2 className="text-lg font-semibold">Delete Data Room?</h2>
+        <p className="mt-3 text-sm leading-6 text-slate-600">
+          <span className="font-medium text-ink">{room.name}</span>, every nested folder, and every
+          document will be permanently deleted. This cannot be undone.
+        </p>
+        {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+        <div className="mt-6 flex justify-end gap-3">
+          <button onClick={onClose} disabled={deleting} className="px-3 py-2 text-sm font-medium">
+            Cancel
+          </button>
+          <button
+            onClick={remove}
+            disabled={deleting}
+            className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+          >
+            {deleting ? 'Deleting…' : 'Delete permanently'}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
 }

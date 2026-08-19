@@ -1,5 +1,14 @@
 export type ItemKind = 'folder' | 'file';
 
+/** Mirrors the ShareTargetType enum in the Prisma schema for browser consumers. */
+export const ShareTargetType = {
+  DATA_ROOM: 'DATA_ROOM',
+  FOLDER: 'FOLDER',
+  FILE: 'FILE',
+} as const;
+
+export type ShareTargetType = (typeof ShareTargetType)[keyof typeof ShareTargetType];
+
 export interface RoomItem {
   id: string;
   name: string;
@@ -38,7 +47,7 @@ export interface PublicShareContents extends FolderContents {
   room: { name: string; description: string | null };
   shareDescription: string | null;
   scopeName: string;
-  targetType: 'DATA_ROOM' | 'FOLDER' | 'FILE';
+  targetType: ShareTargetType;
 }
 
 export interface UserShare {
@@ -50,7 +59,7 @@ export interface UserShare {
 
 export interface ReceivedShare {
   id: string;
-  targetType: 'DATA_ROOM' | 'FOLDER' | 'FILE';
+  targetType: ShareTargetType;
   targetName: string;
   roomName: string;
   sharedBy: string;

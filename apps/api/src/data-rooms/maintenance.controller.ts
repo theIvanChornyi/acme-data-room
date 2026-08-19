@@ -1,14 +1,18 @@
 import { Controller, ForbiddenException, Headers, Post } from '@nestjs/common';
 import { timingSafeEqual } from 'crypto';
 import { DataRoomsService } from './data-rooms.service';
+import { ApiRequestHeaders, ApiRoutes } from '../routes/api-routes';
+import { ApiMessages } from '../common/messages';
 
-@Controller('maintenance')
+@Controller(ApiRoutes.Maintenance.controller)
 export class MaintenanceController {
   constructor(private readonly dataRooms: DataRoomsService) {}
 
-  @Post('expired-uploads')
-  cleanupExpiredUploads(@Headers('x-maintenance-secret') suppliedSecret?: string) {
-    if (!this.isAuthorized(suppliedSecret)) throw new ForbiddenException('Not authorized');
+  // Remove expired upload sessions and objects.
+  @Post(ApiRoutes.Maintenance.expiredUploads)
+  cleanupExpiredUploads(@Headers(ApiRequestHeaders.maintenanceSecret) suppliedSecret?: string) {
+    if (!this.isAuthorized(suppliedSecret))
+      throw new ForbiddenException(ApiMessages.authorization.maintenanceAccessDenied);
     return this.dataRooms.cleanupExpiredUploads();
   }
 

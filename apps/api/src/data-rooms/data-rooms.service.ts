@@ -7,6 +7,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { createClient } from '@supabase/supabase-js';
+import { ShareAccessType, ShareRole, ShareTargetType } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateDataRoomDto } from './dto/create-data-room.dto';
@@ -16,10 +17,30 @@ import { GrantUserShareDto } from './dto/grant-user-share.dto';
 import { ContentsQueryDto } from './dto/contents-query.dto';
 import { CreateUploadUrlDto } from './dto/create-upload-url.dto';
 import { SearchFilesDto } from './dto/search-files.dto';
+import { ApiMessages } from '../common/messages';
+import {
+  clampPageSize,
+  hasFileExtension,
+  isAlreadyExistsError,
+  isExpectedMimeType,
+  isValidUploadSize,
+  isUniqueConstraintError,
+  normalizeItemName,
+  normalizeRoomName,
+  ValidationLimits,
+} from '../common/helpers/validation';
+import {
+  decodeContentsCursor,
+  decodeFileSearchCursor,
+  encodeCursor,
+  type ContentsCursor,
+  type FileSearchCursor,
+} from '../common/helpers/cursor';
+import { DataRoomStorage } from './data-rooms.constants';
 
 @Injectable()
 export class DataRoomsService {
-  private readonly storageBucket = 'data-room-files';
+  private readonly storageBucket = DataRoomStorage.bucket;
   private bucketReady = false;
 
   constructor(private readonly prisma: PrismaService) {}
@@ -73,7 +94,7 @@ export class DataRoomsService {
   async searchFiles(roomId: string, ownerId: string, dto: SearchFilesDto) {
     await this.assertOwner(roomId, ownerId);
     const cursor = this.decodeFileSearchCursor(dto.cursor);
-    const limit = Math.min(Math.max(dto.limit ?? 50, 1), 100);
+    const limit = clampPageSize(dto.limit);
     const files = await this.prisma.file.findMany({
       where: {
         dataRoomId: roomId,
@@ -99,7 +120,7 @@ export class DataRoomsService {
       where: {
         dataRoomId: roomId,
         ...this.shareTargetWhere(dto),
-        accessType: 'PUBLIC_LINK',
+        accessType: ShareAccessType.PUBLIC_LINK,
         revokedAt: null,
       },
       select: { id: true, token: true, description: true, createdAt: true },
@@ -114,12 +135,12 @@ export class DataRoomsService {
       data: {
         dataRoomId: roomId,
         targetType: dto.targetType,
-        accessType: 'PUBLIC_LINK',
-        role: 'VIEWER',
+        accessType: ShareAccessType.PUBLIC_LINK,
+        role: ShareRole.VIEWER,
         token: randomBytes(32).toString('base64url'),
         description: dto.description?.trim() || null,
-        folderId: dto.targetType === 'FOLDER' ? dto.folderId : null,
-        fileId: dto.targetType === 'FILE' ? dto.fileId : null,
+        folderId: dto.targetType === ShareTargetType.FOLDER ? dto.folderId : null,
+        fileId: dto.targetType === ShareTargetType.FILE ? dto.fileId : null,
       },
       select: { id: true, token: true, description: true, createdAt: true },
     });
@@ -128,9 +149,14 @@ export class DataRoomsService {
   async revokePublicShare(roomId: string, ownerId: string, shareId: string) {
     await this.assertOwner(roomId, ownerId);
     const share = await this.prisma.share.findFirst({
-      where: { id: shareId, dataRoomId: roomId, accessType: 'PUBLIC_LINK', revokedAt: null },
+      where: {
+        id: shareId,
+        dataRoomId: roomId,
+        accessType: ShareAccessType.PUBLIC_LINK,
+        revokedAt: null,
+      },
     });
-    if (!share) throw new NotFoundException('Public link not found');
+    if (!share) throw new NotFoundException(ApiMessages.shares.publicLinkNotFound);
     await this.prisma.share.update({ where: { id: shareId }, data: { revokedAt: new Date() } });
     return { revoked: true };
   }
@@ -142,7 +168,7 @@ export class DataRoomsService {
         where: {
           dataRoomId: roomId,
           ...this.shareTargetWhere(dto),
-          accessType: 'USER',
+          accessType: ShareAccessType.USER,
           revokedAt: null,
         },
         select: {
@@ -170,11 +196,11 @@ export class DataRoomsService {
     const email = dto.email.trim().toLowerCase();
     const recipient = await this.prisma.user.findUnique({ where: { email }, select: { id: true } });
     if (recipient?.id === ownerId)
-      throw new BadRequestException('The owner already has access to this Data Room');
+      throw new BadRequestException(ApiMessages.shares.ownerAlreadyHasAccess);
     const where = {
       dataRoomId: roomId,
       ...this.shareTargetWhere(dto),
-      accessType: 'USER' as const,
+      accessType: ShareAccessType.USER,
       revokedAt: null,
       OR: recipient
         ? [{ recipientId: recipient.id }, { recipientEmail: email }]
@@ -189,12 +215,12 @@ export class DataRoomsService {
       data: {
         dataRoomId: roomId,
         targetType: dto.targetType,
-        accessType: 'USER',
-        role: 'VIEWER',
+        accessType: ShareAccessType.USER,
+        role: ShareRole.VIEWER,
         recipientId: recipient?.id,
         recipientEmail: email,
-        folderId: dto.targetType === 'FOLDER' ? dto.folderId : null,
-        fileId: dto.targetType === 'FILE' ? dto.fileId : null,
+        folderId: dto.targetType === ShareTargetType.FOLDER ? dto.folderId : null,
+        fileId: dto.targetType === ShareTargetType.FILE ? dto.fileId : null,
       },
       select: { id: true, createdAt: true },
     });
@@ -204,9 +230,14 @@ export class DataRoomsService {
   async revokeUserShare(roomId: string, ownerId: string, shareId: string) {
     await this.assertOwner(roomId, ownerId);
     const share = await this.prisma.share.findFirst({
-      where: { id: shareId, dataRoomId: roomId, accessType: 'USER', revokedAt: null },
+      where: {
+        id: shareId,
+        dataRoomId: roomId,
+        accessType: ShareAccessType.USER,
+        revokedAt: null,
+      },
     });
-    if (!share) throw new NotFoundException('User access not found');
+    if (!share) throw new NotFoundException(ApiMessages.shares.userAccessNotFound);
     await this.prisma.share.update({ where: { id: shareId }, data: { revokedAt: new Date() } });
     return { revoked: true };
   }
@@ -215,7 +246,7 @@ export class DataRoomsService {
     const shares = await this.prisma.share.findMany({
       where: {
         recipientId,
-        accessType: 'USER',
+        accessType: ShareAccessType.USER,
         revokedAt: null,
         OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
       },
@@ -238,13 +269,13 @@ export class DataRoomsService {
 
   async publicContents(token: string, dto: ContentsQueryDto) {
     const share = await this.activePublicShare(token);
-    if (share.targetType === 'FILE') {
-      if (!share.file) throw new NotFoundException('This shared file is unavailable');
+    if (share.targetType === ShareTargetType.FILE) {
+      if (!share.file) throw new NotFoundException(ApiMessages.shares.sharedFileUnavailable);
       return {
         room: { name: share.dataRoom.name, description: share.dataRoom.description },
         shareDescription: share.description,
         scopeName: share.file.name,
-        targetType: 'FILE',
+        targetType: ShareTargetType.FILE,
         folder: null,
         breadcrumbs: [],
         items: [
@@ -258,9 +289,9 @@ export class DataRoomsService {
         nextCursor: null,
       };
     }
-    const sharedFolder = share.targetType === 'FOLDER' ? share.folder : null;
-    if (share.targetType === 'FOLDER' && !sharedFolder)
-      throw new NotFoundException('This shared folder is unavailable');
+    const sharedFolder = share.targetType === ShareTargetType.FOLDER ? share.folder : null;
+    if (share.targetType === ShareTargetType.FOLDER && !sharedFolder)
+      throw new NotFoundException(ApiMessages.shares.sharedFolderUnavailable);
     const requestedFolderId = dto.folderId ?? sharedFolder?.id;
     if (sharedFolder && requestedFolderId) {
       const requested = await this.prisma.folder.findFirst({
@@ -271,7 +302,7 @@ export class DataRoomsService {
         },
         select: { id: true },
       });
-      if (!requested) throw new NotFoundException('This folder is outside the shared area');
+      if (!requested) throw new NotFoundException(ApiMessages.shares.folderOutsideSharedArea);
     }
     const contents = await this.roomContents(share.dataRoomId, {
       ...dto,
@@ -294,13 +325,13 @@ export class DataRoomsService {
 
   async userShareContents(shareId: string, recipientId: string, dto: ContentsQueryDto) {
     const share = await this.activeUserShare(shareId, recipientId);
-    if (share.targetType === 'FILE') {
-      if (!share.file) throw new NotFoundException('This shared file is unavailable');
+    if (share.targetType === ShareTargetType.FILE) {
+      if (!share.file) throw new NotFoundException(ApiMessages.shares.sharedFileUnavailable);
       return {
         room: { name: share.dataRoom.name, description: share.dataRoom.description },
         shareDescription: null,
         scopeName: share.file.name,
-        targetType: 'FILE',
+        targetType: ShareTargetType.FILE,
         folder: null,
         breadcrumbs: [],
         items: [
@@ -314,9 +345,9 @@ export class DataRoomsService {
         nextCursor: null,
       };
     }
-    const sharedFolder = share.targetType === 'FOLDER' ? share.folder : null;
-    if (share.targetType === 'FOLDER' && !sharedFolder)
-      throw new NotFoundException('This shared folder is unavailable');
+    const sharedFolder = share.targetType === ShareTargetType.FOLDER ? share.folder : null;
+    if (share.targetType === ShareTargetType.FOLDER && !sharedFolder)
+      throw new NotFoundException(ApiMessages.shares.sharedFolderUnavailable);
     const requestedFolderId = dto.folderId ?? sharedFolder?.id;
     if (sharedFolder && requestedFolderId) {
       const requested = await this.prisma.folder.findFirst({
@@ -327,7 +358,7 @@ export class DataRoomsService {
         },
         select: { id: true },
       });
-      if (!requested) throw new NotFoundException('This folder is outside the shared area');
+      if (!requested) throw new NotFoundException(ApiMessages.shares.folderOutsideSharedArea);
     }
     const contents = await this.roomContents(share.dataRoomId, {
       ...dto,
@@ -350,10 +381,10 @@ export class DataRoomsService {
 
   async createPublicViewUrl(token: string, fileId: string) {
     const share = await this.activePublicShare(token);
-    if (share.targetType === 'FILE' && share.fileId !== fileId)
-      throw new NotFoundException('File not found');
+    if (share.targetType === ShareTargetType.FILE && share.fileId !== fileId)
+      throw new NotFoundException(ApiMessages.resources.fileNotFound);
     const where =
-      share.targetType === 'FOLDER' && share.folder
+      share.targetType === ShareTargetType.FOLDER && share.folder
         ? {
             id: fileId,
             dataRoomId: share.dataRoomId,
@@ -361,16 +392,16 @@ export class DataRoomsService {
           }
         : { id: fileId, dataRoomId: share.dataRoomId };
     const file = await this.prisma.file.findFirst({ where });
-    if (!file) throw new NotFoundException('File not found');
+    if (!file) throw new NotFoundException(ApiMessages.resources.fileNotFound);
     return this.createStorageUrl(file.storagePath);
   }
 
   async createPublicDownloadUrl(token: string, fileId: string) {
     const share = await this.activePublicShare(token);
-    if (share.targetType === 'FILE' && share.fileId !== fileId)
-      throw new NotFoundException('File not found');
+    if (share.targetType === ShareTargetType.FILE && share.fileId !== fileId)
+      throw new NotFoundException(ApiMessages.resources.fileNotFound);
     const where =
-      share.targetType === 'FOLDER' && share.folder
+      share.targetType === ShareTargetType.FOLDER && share.folder
         ? {
             id: fileId,
             dataRoomId: share.dataRoomId,
@@ -378,7 +409,7 @@ export class DataRoomsService {
           }
         : { id: fileId, dataRoomId: share.dataRoomId };
     const file = await this.prisma.file.findFirst({ where });
-    if (!file) throw new NotFoundException('File not found');
+    if (!file) throw new NotFoundException(ApiMessages.resources.fileNotFound);
     return this.createStorageUrl(file.storagePath, true);
   }
 
@@ -402,7 +433,7 @@ export class DataRoomsService {
         where: { id: folderId, dataRoomId: roomId },
         select: { id: true, name: true, parentId: true, path: true },
       });
-      if (!folder) throw new NotFoundException('Folder not found');
+      if (!folder) throw new NotFoundException(ApiMessages.resources.folderNotFound);
     }
     const { items, nextCursor } = await this.listDirectChildren(
       roomId,
@@ -424,9 +455,10 @@ export class DataRoomsService {
     const parent = dto.parentId
       ? await this.prisma.folder.findFirst({ where: { id: dto.parentId, dataRoomId: roomId } })
       : null;
-    if (dto.parentId && !parent) throw new NotFoundException('Parent folder not found');
+    if (dto.parentId && !parent)
+      throw new NotFoundException(ApiMessages.resources.parentFolderNotFound);
     const id = crypto.randomUUID();
-    const path = `${parent?.path ?? '/'}${id}/`;
+    const path = `${parent?.path ?? DataRoomStorage.rootPath}${id}/`;
     try {
       const folder = await this.prisma.folder.create({
         data: {
@@ -441,8 +473,8 @@ export class DataRoomsService {
       await this.touchRoom(roomId);
       return folder;
     } catch (error: unknown) {
-      if (this.isUniqueError(error))
-        throw new ConflictException('A folder with this name already exists here');
+      if (isUniqueConstraintError(error))
+        throw new ConflictException(ApiMessages.resources.folderNameConflict);
       throw error;
     }
   }
@@ -480,7 +512,7 @@ export class DataRoomsService {
     const folder = await this.prisma.folder.findFirst({
       where: { id: folderId, dataRoomId: roomId },
     });
-    if (!folder) throw new NotFoundException('Folder not found');
+    if (!folder) throw new NotFoundException(ApiMessages.resources.folderNotFound);
     try {
       const renamed = await this.prisma.folder.update({
         where: { id: folder.id },
@@ -489,8 +521,8 @@ export class DataRoomsService {
       await this.touchRoom(roomId);
       return renamed;
     } catch (error) {
-      if (this.isUniqueError(error))
-        throw new ConflictException('A folder with this name already exists here');
+      if (isUniqueConstraintError(error))
+        throw new ConflictException(ApiMessages.resources.folderNameConflict);
       throw error;
     }
   }
@@ -500,7 +532,7 @@ export class DataRoomsService {
     const folder = await this.prisma.folder.findFirst({
       where: { id: folderId, dataRoomId: roomId },
     });
-    if (!folder) throw new NotFoundException('Folder not found');
+    if (!folder) throw new NotFoundException(ApiMessages.resources.folderNotFound);
     const folders = await this.prisma.folder.findMany({
       where: { dataRoomId: roomId, path: { startsWith: folder.path } },
       select: { id: true },
@@ -522,7 +554,7 @@ export class DataRoomsService {
     const folder = await this.prisma.folder.findFirst({
       where: { id: folderId, dataRoomId: roomId },
     });
-    if (!folder) throw new NotFoundException('Folder not found');
+    if (!folder) throw new NotFoundException(ApiMessages.resources.folderNotFound);
     const folders = await this.prisma.folder.findMany({
       where: { dataRoomId: roomId, path: { startsWith: folder.path } },
       select: { id: true },
@@ -554,12 +586,12 @@ export class DataRoomsService {
       const folder = await this.prisma.folder.findFirst({
         where: { id: dto.folderId, dataRoomId: roomId },
       });
-      if (!folder) throw new NotFoundException('Folder not found');
+      if (!folder) throw new NotFoundException(ApiMessages.resources.folderNotFound);
     }
     await this.ensureBucket();
     const uploadId = crypto.randomUUID();
-    const storagePath = `${roomId}/${dto.folderId ?? 'root'}/${uploadId}.pdf`;
-    const expiresAt = new Date(Date.now() + 2 * 60 * 60 * 1000);
+    const storagePath = `${roomId}/${dto.folderId ?? DataRoomStorage.rootFolder}/${uploadId}${DataRoomStorage.upload.extension}`;
+    const expiresAt = new Date(Date.now() + DataRoomStorage.uploadSessionTtlMilliseconds);
     await this.prisma.uploadSession.create({
       data: {
         id: uploadId,
@@ -576,7 +608,8 @@ export class DataRoomsService {
       const { data, error } = await this.storage()
         .storage.from(this.storageBucket)
         .createSignedUploadUrl(storagePath);
-      if (error || !data) throw new InternalServerErrorException('Unable to prepare file upload');
+      if (error || !data)
+        throw new InternalServerErrorException(ApiMessages.uploads.unableToPrepare);
       return { uploadId, signedUrl: data.signedUrl, expiresAt: expiresAt.toISOString() };
     } catch (error) {
       await this.prisma.uploadSession.delete({ where: { id: uploadId } }).catch(() => undefined);
@@ -602,22 +635,20 @@ export class DataRoomsService {
     const upload = await this.prisma.uploadSession.findFirst({
       where: { id: uploadId, dataRoomId: roomId, ownerId },
     });
-    if (!upload) throw new NotFoundException('Upload was not found. Start the upload again.');
+    if (!upload) throw new NotFoundException(ApiMessages.uploads.sessionNotFound);
     if (upload.expiresAt <= new Date()) {
       await this.discardUpload(upload);
-      throw new BadRequestException('Upload link has expired. Start the upload again.');
+      throw new BadRequestException(ApiMessages.uploads.sessionExpired);
     }
 
     const { data: storedFile, error } = await this.storage()
       .storage.from(this.storageBucket)
       .info(upload.storagePath);
     const expectedSize = Number(upload.sizeBytes);
-    const isPdf = storedFile?.contentType?.split(';')[0].toLowerCase() === 'application/pdf';
+    const isPdf = isExpectedMimeType(storedFile?.contentType, DataRoomStorage.upload.mimeType);
     if (error || !storedFile || storedFile.size !== expectedSize || !isPdf) {
       await this.discardUpload(upload);
-      throw new BadRequestException(
-        'The uploaded file could not be verified. Choose a PDF and try again.',
-      );
+      throw new BadRequestException(ApiMessages.uploads.verificationFailed);
     }
 
     try {
@@ -636,7 +667,7 @@ export class DataRoomsService {
                 folderId: upload.folderId,
                 name,
                 storagePath: upload.storagePath,
-                mimeType: 'application/pdf',
+                mimeType: DataRoomStorage.upload.mimeType,
                 sizeBytes: upload.sizeBytes,
               },
             });
@@ -688,7 +719,7 @@ export class DataRoomsService {
     let failed = 0;
 
     for (let index = 0; index < uploads.length; index += 100) {
-      const batch = uploads.slice(index, index + 100);
+      const batch = uploads.slice(index, index + DataRoomStorage.maxObjectsPerDelete);
       try {
         await this.removeStorageObjects(batch.map((upload) => upload.storagePath));
         const result = await this.prisma.uploadSession.deleteMany({
@@ -715,21 +746,21 @@ export class DataRoomsService {
   async createViewUrl(roomId: string, ownerId: string, fileId: string) {
     await this.assertOwner(roomId, ownerId);
     const file = await this.prisma.file.findFirst({ where: { id: fileId, dataRoomId: roomId } });
-    if (!file) throw new NotFoundException('File not found');
+    if (!file) throw new NotFoundException(ApiMessages.resources.fileNotFound);
     return this.createStorageUrl(file.storagePath);
   }
 
   async createDownloadUrl(roomId: string, ownerId: string, fileId: string) {
     await this.assertOwner(roomId, ownerId);
     const file = await this.prisma.file.findFirst({ where: { id: fileId, dataRoomId: roomId } });
-    if (!file) throw new NotFoundException('File not found');
+    if (!file) throw new NotFoundException(ApiMessages.resources.fileNotFound);
     return this.createStorageUrl(file.storagePath, true);
   }
 
   async renameFile(roomId: string, ownerId: string, fileId: string, name: string) {
     await this.assertOwner(roomId, ownerId);
     const file = await this.prisma.file.findFirst({ where: { id: fileId, dataRoomId: roomId } });
-    if (!file) throw new NotFoundException('File not found');
+    if (!file) throw new NotFoundException(ApiMessages.resources.fileNotFound);
     const renamed = await this.withAvailableFileName(
       roomId,
       file.folderId,
@@ -750,12 +781,12 @@ export class DataRoomsService {
   ) {
     await this.assertOwner(roomId, ownerId);
     const file = await this.prisma.file.findFirst({ where: { id: fileId, dataRoomId: roomId } });
-    if (!file) throw new NotFoundException('File not found');
+    if (!file) throw new NotFoundException(ApiMessages.resources.fileNotFound);
     if (destinationFolderId) {
       const folder = await this.prisma.folder.findFirst({
         where: { id: destinationFolderId, dataRoomId: roomId },
       });
-      if (!folder) throw new NotFoundException('Destination folder not found');
+      if (!folder) throw new NotFoundException(ApiMessages.resources.destinationFolderNotFound);
     }
     const destination = destinationFolderId ?? null;
     if (file.folderId === destination) return { ...file, sizeBytes: file.sizeBytes.toString() };
@@ -776,13 +807,12 @@ export class DataRoomsService {
     await this.assertOwner(roomId, ownerId);
     await this.assertOwner(destinationRoomId, ownerId);
     const file = await this.prisma.file.findFirst({ where: { id: fileId, dataRoomId: roomId } });
-    if (!file) throw new NotFoundException('File not found');
-    const storagePath = `${destinationRoomId}/root/${crypto.randomUUID()}.pdf`;
+    if (!file) throw new NotFoundException(ApiMessages.resources.fileNotFound);
+    const storagePath = `${destinationRoomId}/${DataRoomStorage.rootFolder}/${crypto.randomUUID()}${DataRoomStorage.upload.extension}`;
     const { error: storageError } = await this.storage()
       .storage.from(this.storageBucket)
       .move(file.storagePath, storagePath);
-    if (storageError)
-      throw new InternalServerErrorException('Unable to move file in private storage');
+    if (storageError) throw new InternalServerErrorException(ApiMessages.uploads.unableToMove);
     try {
       const moved = await this.withAvailableFileName(
         destinationRoomId,
@@ -816,7 +846,7 @@ export class DataRoomsService {
   async deleteFile(roomId: string, ownerId: string, fileId: string) {
     await this.assertOwner(roomId, ownerId);
     const file = await this.prisma.file.findFirst({ where: { id: fileId, dataRoomId: roomId } });
-    if (!file) throw new NotFoundException('File not found');
+    if (!file) throw new NotFoundException(ApiMessages.resources.fileNotFound);
     await this.removeStorageObjects([file.storagePath]);
     await this.prisma.file.delete({ where: { id: file.id } });
     await this.touchRoom(roomId);
@@ -825,46 +855,48 @@ export class DataRoomsService {
 
   private async assertOwner(roomId: string, ownerId: string) {
     const room = await this.prisma.dataRoom.findFirst({ where: { id: roomId, ownerId } });
-    if (!room) throw new ForbiddenException('You do not have access to this Data Room');
+    if (!room) throw new ForbiddenException(ApiMessages.authorization.roomAccessDenied);
     return room;
   }
 
   private shareTargetWhere(dto: CreatePublicShareDto) {
-    if (dto.targetType === 'DATA_ROOM')
-      return { targetType: 'DATA_ROOM' as const, folderId: null, fileId: null };
-    if (dto.targetType === 'FOLDER')
-      return { targetType: 'FOLDER' as const, folderId: dto.folderId ?? '', fileId: null };
-    return { targetType: 'FILE' as const, folderId: null, fileId: dto.fileId ?? '' };
+    if (dto.targetType === ShareTargetType.DATA_ROOM)
+      return { targetType: ShareTargetType.DATA_ROOM, folderId: null, fileId: null };
+    if (dto.targetType === ShareTargetType.FOLDER)
+      return { targetType: ShareTargetType.FOLDER, folderId: dto.folderId ?? '', fileId: null };
+    return { targetType: ShareTargetType.FILE, folderId: null, fileId: dto.fileId ?? '' };
   }
 
   private async assertShareTarget(roomId: string, dto: CreatePublicShareDto) {
-    if (dto.targetType === 'DATA_ROOM') {
+    if (dto.targetType === ShareTargetType.DATA_ROOM) {
       if (dto.folderId || dto.fileId)
-        throw new BadRequestException('A Data Room share cannot include a folder or file');
+        throw new BadRequestException(ApiMessages.shares.invalidRoomTarget);
       return;
     }
-    if (dto.targetType === 'FOLDER') {
-      if (!dto.folderId || dto.fileId) throw new BadRequestException('Choose one folder to share');
+    if (dto.targetType === ShareTargetType.FOLDER) {
+      if (!dto.folderId || dto.fileId)
+        throw new BadRequestException(ApiMessages.shares.chooseFolderTarget);
       const folder = await this.prisma.folder.findFirst({
         where: { id: dto.folderId, dataRoomId: roomId },
         select: { id: true },
       });
-      if (!folder) throw new NotFoundException('Folder not found');
+      if (!folder) throw new NotFoundException(ApiMessages.resources.folderNotFound);
       return;
     }
-    if (!dto.fileId || dto.folderId) throw new BadRequestException('Choose one file to share');
+    if (!dto.fileId || dto.folderId)
+      throw new BadRequestException(ApiMessages.shares.chooseFileTarget);
     const file = await this.prisma.file.findFirst({
       where: { id: dto.fileId, dataRoomId: roomId },
       select: { id: true },
     });
-    if (!file) throw new NotFoundException('File not found');
+    if (!file) throw new NotFoundException(ApiMessages.resources.fileNotFound);
   }
 
   private async activePublicShare(token: string) {
     const share = await this.prisma.share.findFirst({
       where: {
         token,
-        accessType: 'PUBLIC_LINK',
+        accessType: ShareAccessType.PUBLIC_LINK,
         revokedAt: null,
         OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
       },
@@ -885,7 +917,7 @@ export class DataRoomsService {
         },
       },
     });
-    if (!share) throw new NotFoundException('This shared link is unavailable or has been revoked');
+    if (!share) throw new NotFoundException(ApiMessages.shares.publicLinkUnavailable);
     return share;
   }
 
@@ -894,7 +926,7 @@ export class DataRoomsService {
       where: {
         id: shareId,
         recipientId,
-        accessType: 'USER',
+        accessType: ShareAccessType.USER,
         revokedAt: null,
         OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
       },
@@ -915,8 +947,7 @@ export class DataRoomsService {
         },
       },
     });
-    if (!share)
-      throw new NotFoundException('This shared access is unavailable or has been revoked');
+    if (!share) throw new NotFoundException(ApiMessages.shares.sharedAccessUnavailable);
     return share;
   }
 
@@ -924,10 +955,10 @@ export class DataRoomsService {
     share: Awaited<ReturnType<DataRoomsService['activeUserShare']>>,
     fileId: string,
   ) {
-    if (share.targetType === 'FILE' && share.fileId !== fileId)
-      throw new NotFoundException('File not found');
+    if (share.targetType === ShareTargetType.FILE && share.fileId !== fileId)
+      throw new NotFoundException(ApiMessages.resources.fileNotFound);
     const where =
-      share.targetType === 'FOLDER' && share.folder
+      share.targetType === ShareTargetType.FOLDER && share.folder
         ? {
             id: fileId,
             dataRoomId: share.dataRoomId,
@@ -935,7 +966,7 @@ export class DataRoomsService {
           }
         : { id: fileId, dataRoomId: share.dataRoomId };
     const file = await this.prisma.file.findFirst({ where });
-    if (!file) throw new NotFoundException('File not found');
+    if (!file) throw new NotFoundException(ApiMessages.resources.fileNotFound);
     return file;
   }
 
@@ -959,16 +990,21 @@ export class DataRoomsService {
   private storage() {
     const url = process.env.SUPABASE_URL;
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (!url || !key) throw new InternalServerErrorException('Supabase storage is not configured');
+    if (!url || !key)
+      throw new InternalServerErrorException(ApiMessages.uploads.storageNotConfigured);
     return createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
   }
 
   private async createStorageUrl(storagePath: string, download = false) {
     const { data, error } = await this.storage()
       .storage.from(this.storageBucket)
-      .createSignedUrl(storagePath, 10 * 60, download ? { download: true } : undefined);
-    if (error || !data) throw new NotFoundException('The stored file is no longer available');
-    return { url: data.signedUrl, expiresIn: 600 };
+      .createSignedUrl(
+        storagePath,
+        DataRoomStorage.signedUrlTtlSeconds,
+        download ? { download: true } : undefined,
+      );
+    if (error || !data) throw new NotFoundException(ApiMessages.uploads.storedFileUnavailable);
+    return { url: data.signedUrl, expiresIn: DataRoomStorage.signedUrlTtlSeconds };
   }
 
   private async listDirectChildren(
@@ -978,7 +1014,7 @@ export class DataRoomsService {
     requestedLimit: number,
   ) {
     const cursor = this.decodeContentsCursor(cursorInput);
-    const limit = Math.min(Math.max(requestedLimit, 1), 100);
+    const limit = clampPageSize(requestedLimit);
     const folderWhere = {
       dataRoomId: roomId,
       parentId: folderId,
@@ -1059,97 +1095,59 @@ export class DataRoomsService {
     };
   }
 
-  private encodeContentsCursor(cursor: { kind: 'folder' | 'file'; name: string; id: string }) {
-    return Buffer.from(JSON.stringify(cursor)).toString('base64url');
+  private encodeContentsCursor(cursor: ContentsCursor) {
+    return encodeCursor(cursor);
   }
 
-  private decodeContentsCursor(
-    cursor: string | undefined,
-  ): { kind: 'folder' | 'file'; name: string; id: string } | null {
-    if (!cursor) return null;
-    try {
-      const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as {
-        kind?: unknown;
-        name?: unknown;
-        id?: unknown;
-      };
-      if (
-        (parsed.kind !== 'folder' && parsed.kind !== 'file') ||
-        typeof parsed.name !== 'string' ||
-        !parsed.name ||
-        parsed.name.length > 180 ||
-        typeof parsed.id !== 'string' ||
-        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-          parsed.id,
-        )
-      )
-        throw new Error('Invalid cursor');
-      return { kind: parsed.kind, name: parsed.name, id: parsed.id };
-    } catch {
-      throw new BadRequestException('Invalid page cursor');
-    }
+  private decodeContentsCursor(cursor: string | undefined): ContentsCursor | null {
+    const parsed = decodeContentsCursor(cursor);
+    if (parsed === null) throw new BadRequestException(ApiMessages.validation.invalidPageCursor);
+    return parsed ?? null;
   }
 
-  private encodeFileSearchCursor(file: { name: string; id: string }) {
-    return Buffer.from(JSON.stringify(file)).toString('base64url');
+  private encodeFileSearchCursor(file: FileSearchCursor) {
+    return encodeCursor(file);
   }
 
-  private decodeFileSearchCursor(cursor: string | undefined): { name: string; id: string } | null {
-    if (!cursor) return null;
-    try {
-      const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as {
-        name?: unknown;
-        id?: unknown;
-      };
-      if (
-        typeof parsed.name !== 'string' ||
-        !parsed.name ||
-        parsed.name.length > 180 ||
-        typeof parsed.id !== 'string' ||
-        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-          parsed.id,
-        )
-      )
-        throw new Error('Invalid cursor');
-      return { name: parsed.name, id: parsed.id };
-    } catch {
-      throw new BadRequestException('Invalid search cursor');
-    }
+  private decodeFileSearchCursor(cursor: string | undefined): FileSearchCursor | null {
+    const parsed = decodeFileSearchCursor(cursor);
+    if (parsed === null) throw new BadRequestException(ApiMessages.validation.invalidSearchCursor);
+    return parsed ?? null;
   }
 
   private async ensureBucket() {
     if (this.bucketReady) return;
     const client = this.storage();
     const { data, error } = await client.storage.listBuckets();
-    if (error) throw new InternalServerErrorException('Unable to access file storage');
+    if (error) throw new InternalServerErrorException(ApiMessages.uploads.storageUnavailable);
     if (!data.some((bucket) => bucket.id === this.storageBucket)) {
       const { error: createError } = await client.storage.createBucket(this.storageBucket, {
         public: false,
-        fileSizeLimit: '26214400',
-        allowedMimeTypes: ['application/pdf'],
+        fileSizeLimit: DataRoomStorage.upload.maxSizeBytes.toString(),
+        allowedMimeTypes: [DataRoomStorage.upload.mimeType],
       });
-      if (createError && !/already exists/i.test(createError.message))
-        throw new InternalServerErrorException('Unable to create private file storage');
+      if (createError && !isAlreadyExistsError(createError.message))
+        throw new InternalServerErrorException(ApiMessages.uploads.unableToCreateBucket);
     }
     this.bucketReady = true;
   }
 
   private async removeStorageObjects(paths: string[]) {
     const client = this.storage();
-    for (let index = 0; index < paths.length; index += 100) {
+    for (let index = 0; index < paths.length; index += DataRoomStorage.maxObjectsPerDelete) {
       const { error } = await client.storage
         .from(this.storageBucket)
-        .remove(paths.slice(index, index + 100));
-      if (error) throw new InternalServerErrorException('Unable to remove file storage objects');
+        .remove(paths.slice(index, index + DataRoomStorage.maxObjectsPerDelete));
+      if (error) throw new InternalServerErrorException(ApiMessages.uploads.unableToRemoveFiles);
     }
   }
 
   private validateUploadCandidate(name: string, sizeBytes: number) {
     const cleaned = this.cleanFileName(name);
-    if (!cleaned.toLowerCase().endsWith('.pdf'))
-      throw new BadRequestException('Only PDF files can be uploaded');
-    if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 1 || sizeBytes > 25 * 1024 * 1024)
-      throw new BadRequestException(`${cleaned} exceeds the 25 MB limit`);
+    if (!hasFileExtension(cleaned, DataRoomStorage.upload.extension))
+      throw new BadRequestException(ApiMessages.uploads.onlyPdf);
+    if (!isValidUploadSize(sizeBytes))
+      throw new BadRequestException(ApiMessages.uploads.exceedsSizeLimit(cleaned));
     return cleaned;
   }
 
@@ -1176,23 +1174,23 @@ export class DataRoomsService {
   }
 
   private cleanFileName(name: string) {
-    const cleaned = name.trim().replace(/[\\/]/g, '-').replace(/\s+/g, ' ');
-    if (!cleaned || cleaned.length > 180)
-      throw new BadRequestException('File name must contain 1–180 characters');
+    const cleaned = normalizeItemName(name);
+    if (!cleaned || cleaned.length > ValidationLimits.fileNameLength)
+      throw new BadRequestException(ApiMessages.validation.invalidFileName);
     return cleaned;
   }
 
   private cleanFolderName(name: string) {
-    const cleaned = name.trim().replace(/[\\/]/g, '-').replace(/\s+/g, ' ');
-    if (!cleaned || cleaned.length > 180)
-      throw new BadRequestException('Folder name must contain 1–180 characters');
+    const cleaned = normalizeItemName(name);
+    if (!cleaned || cleaned.length > ValidationLimits.folderNameLength)
+      throw new BadRequestException(ApiMessages.validation.invalidFolderName);
     return cleaned;
   }
 
   private cleanRoomName(name: string) {
-    const cleaned = name.trim().replace(/\s+/g, ' ');
-    if (!cleaned || cleaned.length > 120)
-      throw new BadRequestException('Data Room name must contain 1–120 characters');
+    const cleaned = normalizeRoomName(name);
+    if (!cleaned || cleaned.length > ValidationLimits.roomNameLength)
+      throw new BadRequestException(ApiMessages.validation.invalidRoomName);
     return cleaned;
   }
 
@@ -1218,7 +1216,7 @@ export class DataRoomsService {
       });
       if (!match) return name;
     }
-    throw new ConflictException('Too many files with the same name in this folder');
+    throw new ConflictException(ApiMessages.uploads.duplicateFileNames);
   }
 
   private async withAvailableFileName<T>(
@@ -1233,21 +1231,10 @@ export class DataRoomsService {
       try {
         return await action(name);
       } catch (error) {
-        if (!this.isUniqueError(error)) throw error;
+        if (!isUniqueConstraintError(error)) throw error;
       }
     }
-    throw new ConflictException(
-      'Unable to resolve a concurrent file name conflict. Please try again.',
-    );
-  }
-
-  private isUniqueError(error: unknown): boolean {
-    return (
-      typeof error === 'object' &&
-      error !== null &&
-      'code' in error &&
-      (error as { code: string }).code === 'P2002'
-    );
+    throw new ConflictException(ApiMessages.uploads.concurrentFileNameConflict);
   }
 
   private touchRoom(roomId: string) {

@@ -24,269 +24,307 @@ import { ContentsQueryDto } from './dto/contents-query.dto';
 import { ListFoldersDto } from './dto/list-folders.dto';
 import { SearchFilesDto } from './dto/search-files.dto';
 import { DataRoomsService } from './data-rooms.service';
+import { ApiRouteParameters, ApiRoutes } from '../routes/api-routes';
 
-@Controller('data-rooms')
+@Controller(ApiRoutes.DataRooms.controller)
 @UseGuards(SupabaseAuthGuard)
 export class DataRoomsController {
   constructor(private readonly dataRooms: DataRoomsService) {}
 
+  // List the caller's Data Rooms.
   @Get() list(@CurrentUser() user: AuthenticatedUser) {
     return this.dataRooms.list(user.id);
   }
 
+  // Create a Data Room for the caller.
   @Post() create(@CurrentUser() user: AuthenticatedUser, @Body() dto: CreateDataRoomDto) {
     return this.dataRooms.create(user.id, user.email, dto);
   }
 
-  @Patch(':roomId')
+  // Rename a Data Room.
+  @Patch(ApiRoutes.DataRooms.room)
   renameRoom(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('roomId') roomId: string,
+    @Param(ApiRouteParameters.roomId) roomId: string,
     @Body() dto: CreateDataRoomDto,
   ) {
     return this.dataRooms.renameRoom(roomId, user.id, dto);
   }
 
-  @Delete(':roomId')
-  deleteRoom(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string) {
+  // Delete a Data Room and its content.
+  @Delete(ApiRoutes.DataRooms.room)
+  deleteRoom(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param(ApiRouteParameters.roomId) roomId: string,
+  ) {
     return this.dataRooms.deleteRoom(roomId, user.id);
   }
 
-  @Get(':roomId/contents')
+  // List room content with pagination.
+  @Get(ApiRoutes.DataRooms.contents)
   contents(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('roomId') roomId: string,
+    @Param(ApiRouteParameters.roomId) roomId: string,
     @Query() dto: ContentsQueryDto,
   ) {
     return this.dataRooms.contents(roomId, user.id, dto);
   }
 
-  @Get(':roomId/search')
+  // Search files in a Data Room.
+  @Get(ApiRoutes.DataRooms.search)
   searchFiles(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('roomId') roomId: string,
+    @Param(ApiRouteParameters.roomId) roomId: string,
     @Query() dto: SearchFilesDto,
   ) {
     return this.dataRooms.searchFiles(roomId, user.id, dto);
   }
 
-  @Get(':roomId/shares/public')
+  // List public links for a target.
+  @Get(ApiRoutes.DataRooms.publicShares)
   listPublicShares(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('roomId') roomId: string,
+    @Param(ApiRouteParameters.roomId) roomId: string,
     @Query() dto: CreatePublicShareDto,
   ) {
     return this.dataRooms.listPublicShares(roomId, user.id, dto);
   }
 
-  @Post(':roomId/shares/public')
+  // Create a public link for a target.
+  @Post(ApiRoutes.DataRooms.publicShares)
   createPublicShare(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('roomId') roomId: string,
+    @Param(ApiRouteParameters.roomId) roomId: string,
     @Body() dto: CreatePublicShareDto,
   ) {
     return this.dataRooms.createPublicShare(roomId, user.id, dto);
   }
 
-  @Delete(':roomId/shares/public/:shareId')
+  // Revoke a public link.
+  @Delete(ApiRoutes.DataRooms.publicShare)
   revokePublicShare(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('roomId') roomId: string,
-    @Param('shareId') shareId: string,
+    @Param(ApiRouteParameters.roomId) roomId: string,
+    @Param(ApiRouteParameters.shareId) shareId: string,
   ) {
     return this.dataRooms.revokePublicShare(roomId, user.id, shareId);
   }
 
-  @Get(':roomId/shares/users')
+  // List user access grants for a target.
+  @Get(ApiRoutes.DataRooms.userShares)
   listUserShares(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('roomId') roomId: string,
+    @Param(ApiRouteParameters.roomId) roomId: string,
     @Query() dto: CreatePublicShareDto,
   ) {
     return this.dataRooms.listUserShares(roomId, user.id, dto);
   }
 
-  @Post(':roomId/shares/users')
+  // Grant a user access to a target.
+  @Post(ApiRoutes.DataRooms.userShares)
   grantUserShare(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('roomId') roomId: string,
+    @Param(ApiRouteParameters.roomId) roomId: string,
     @Body() dto: GrantUserShareDto,
   ) {
     return this.dataRooms.grantUserShare(roomId, user.id, dto);
   }
 
-  @Delete(':roomId/shares/users/:shareId')
+  // Revoke a user's access grant.
+  @Delete(ApiRoutes.DataRooms.userShare)
   revokeUserShare(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('roomId') roomId: string,
-    @Param('shareId') shareId: string,
+    @Param(ApiRouteParameters.roomId) roomId: string,
+    @Param(ApiRouteParameters.shareId) shareId: string,
   ) {
     return this.dataRooms.revokeUserShare(roomId, user.id, shareId);
   }
 
-  @Get('shared-with-me')
+  // List content shared with the caller.
+  @Get(ApiRoutes.DataRooms.sharedWithMe)
   sharedWithMe(@CurrentUser() user: AuthenticatedUser) {
     return this.dataRooms.sharedWithMe(user.id);
   }
 
-  @Get('shared-with-me/:shareId/contents')
+  // List content in a received share.
+  @Get(ApiRoutes.DataRooms.receivedShareContents)
   sharedWithMeContents(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('shareId') shareId: string,
+    @Param(ApiRouteParameters.shareId) shareId: string,
     @Query() dto: ContentsQueryDto,
   ) {
     return this.dataRooms.userShareContents(shareId, user.id, dto);
   }
 
-  @Get('shared-with-me/:shareId/files/:fileId/view')
+  // Create a preview URL for a received file.
+  @Get(ApiRoutes.DataRooms.receivedShareViewFile)
   sharedWithMeView(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('shareId') shareId: string,
-    @Param('fileId') fileId: string,
+    @Param(ApiRouteParameters.shareId) shareId: string,
+    @Param(ApiRouteParameters.fileId) fileId: string,
   ) {
     return this.dataRooms.createUserShareViewUrl(shareId, user.id, fileId);
   }
 
-  @Get('shared-with-me/:shareId/files/:fileId/download')
+  // Create a download URL for a received file.
+  @Get(ApiRoutes.DataRooms.receivedShareDownloadFile)
   sharedWithMeDownload(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('shareId') shareId: string,
-    @Param('fileId') fileId: string,
+    @Param(ApiRouteParameters.shareId) shareId: string,
+    @Param(ApiRouteParameters.fileId) fileId: string,
   ) {
     return this.dataRooms.createUserShareDownloadUrl(shareId, user.id, fileId);
   }
 
-  @Post(':roomId/folders')
+  // Create a folder in a Data Room.
+  @Post(ApiRoutes.DataRooms.folders)
   createFolder(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('roomId') roomId: string,
+    @Param(ApiRouteParameters.roomId) roomId: string,
     @Body() dto: CreateFolderDto,
   ) {
     return this.dataRooms.createFolder(roomId, user.id, dto);
   }
 
-  @Get(':roomId/folders')
+  // List direct child folders.
+  @Get(ApiRoutes.DataRooms.folders)
   listFolders(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('roomId') roomId: string,
+    @Param(ApiRouteParameters.roomId) roomId: string,
     @Query() dto: ListFoldersDto,
   ) {
     return this.dataRooms.listFolders(roomId, user.id, dto.parentId);
   }
 
-  @Get(':roomId/folder-options')
-  listFolderOptions(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string) {
+  // List folders for move destinations.
+  @Get(ApiRoutes.DataRooms.folderOptions)
+  listFolderOptions(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param(ApiRouteParameters.roomId) roomId: string,
+  ) {
     return this.dataRooms.listFolderOptions(roomId, user.id);
   }
 
-  @Patch(':roomId/folders/:folderId')
+  // Rename a folder.
+  @Patch(ApiRoutes.DataRooms.folder)
   renameFolder(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('roomId') roomId: string,
-    @Param('folderId') folderId: string,
+    @Param(ApiRouteParameters.roomId) roomId: string,
+    @Param(ApiRouteParameters.folderId) folderId: string,
     @Body() dto: RenameItemDto,
   ) {
     return this.dataRooms.renameFolder(roomId, user.id, folderId, dto.name);
   }
 
-  @Get(':roomId/folders/:folderId/deletion-summary')
+  // Preview the impact of deleting a folder.
+  @Get(ApiRoutes.DataRooms.folderDeletionSummary)
   folderDeletionSummary(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('roomId') roomId: string,
-    @Param('folderId') folderId: string,
+    @Param(ApiRouteParameters.roomId) roomId: string,
+    @Param(ApiRouteParameters.folderId) folderId: string,
   ) {
     return this.dataRooms.folderDeletionSummary(roomId, user.id, folderId);
   }
 
-  @Delete(':roomId/folders/:folderId')
+  // Delete a folder subtree.
+  @Delete(ApiRoutes.DataRooms.folder)
   deleteFolder(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('roomId') roomId: string,
-    @Param('folderId') folderId: string,
+    @Param(ApiRouteParameters.roomId) roomId: string,
+    @Param(ApiRouteParameters.folderId) folderId: string,
   ) {
     return this.dataRooms.deleteFolder(roomId, user.id, folderId);
   }
 
-  @Post(':roomId/files/upload-url')
+  // Start a direct file upload.
+  @Post(ApiRoutes.DataRooms.uploadUrl)
   createUploadUrl(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('roomId') roomId: string,
+    @Param(ApiRouteParameters.roomId) roomId: string,
     @Body() dto: CreateUploadUrlDto,
   ) {
     return this.dataRooms.createUploadUrl(roomId, user.id, dto);
   }
 
-  @Post(':roomId/files/complete-upload')
+  // Confirm a completed upload.
+  @Post(ApiRoutes.DataRooms.completeUpload)
   completeUpload(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('roomId') roomId: string,
+    @Param(ApiRouteParameters.roomId) roomId: string,
     @Body() dto: CompleteUploadDto,
   ) {
     return this.dataRooms.completeUpload(roomId, user.id, dto.uploadId);
   }
 
-  @Delete(':roomId/files/uploads/:uploadId')
+  // Cancel a pending upload.
+  @Delete(ApiRoutes.DataRooms.upload)
   cancelUpload(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('roomId') roomId: string,
-    @Param('uploadId') uploadId: string,
+    @Param(ApiRouteParameters.roomId) roomId: string,
+    @Param(ApiRouteParameters.uploadId) uploadId: string,
   ) {
     return this.dataRooms.cancelUpload(roomId, user.id, uploadId);
   }
 
-  @Get(':roomId/files/:fileId/view')
+  // Create a private preview URL.
+  @Get(ApiRoutes.DataRooms.viewFile)
   viewFile(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('roomId') roomId: string,
-    @Param('fileId') fileId: string,
+    @Param(ApiRouteParameters.roomId) roomId: string,
+    @Param(ApiRouteParameters.fileId) fileId: string,
   ) {
     return this.dataRooms.createViewUrl(roomId, user.id, fileId);
   }
 
-  @Get(':roomId/files/:fileId/download')
+  // Create a private download URL.
+  @Get(ApiRoutes.DataRooms.downloadFile)
   downloadFile(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('roomId') roomId: string,
-    @Param('fileId') fileId: string,
+    @Param(ApiRouteParameters.roomId) roomId: string,
+    @Param(ApiRouteParameters.fileId) fileId: string,
   ) {
     return this.dataRooms.createDownloadUrl(roomId, user.id, fileId);
   }
 
-  @Patch(':roomId/files/:fileId')
+  // Rename a file.
+  @Patch(ApiRoutes.DataRooms.file)
   renameFile(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('roomId') roomId: string,
-    @Param('fileId') fileId: string,
+    @Param(ApiRouteParameters.roomId) roomId: string,
+    @Param(ApiRouteParameters.fileId) fileId: string,
     @Body() dto: RenameItemDto,
   ) {
     return this.dataRooms.renameFile(roomId, user.id, fileId, dto.name);
   }
 
-  @Patch(':roomId/files/:fileId/move')
+  // Move a file within its Data Room.
+  @Patch(ApiRoutes.DataRooms.moveFile)
   moveFile(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('roomId') roomId: string,
-    @Param('fileId') fileId: string,
+    @Param(ApiRouteParameters.roomId) roomId: string,
+    @Param(ApiRouteParameters.fileId) fileId: string,
     @Body() dto: MoveFileDto,
   ) {
     return this.dataRooms.moveFile(roomId, user.id, fileId, dto.folderId);
   }
 
-  @Patch(':roomId/files/:fileId/move-to-room')
+  // Move a file to another Data Room.
+  @Patch(ApiRoutes.DataRooms.moveFileToRoom)
   moveFileToRoom(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('roomId') roomId: string,
-    @Param('fileId') fileId: string,
+    @Param(ApiRouteParameters.roomId) roomId: string,
+    @Param(ApiRouteParameters.fileId) fileId: string,
     @Body() dto: MoveFileToRoomDto,
   ) {
     return this.dataRooms.moveFileToRoom(roomId, user.id, fileId, dto.destinationRoomId);
   }
 
-  @Delete(':roomId/files/:fileId')
+  // Delete a file.
+  @Delete(ApiRoutes.DataRooms.file)
   deleteFile(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('roomId') roomId: string,
-    @Param('fileId') fileId: string,
+    @Param(ApiRouteParameters.roomId) roomId: string,
+    @Param(ApiRouteParameters.fileId) fileId: string,
   ) {
     return this.dataRooms.deleteFile(roomId, user.id, fileId);
   }
