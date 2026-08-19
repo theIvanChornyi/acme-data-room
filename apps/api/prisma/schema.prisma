@@ -27,6 +27,12 @@ enum ShareRole {
   EDITOR
 }
 
+/// Scope removed by a durable background deletion job.
+enum DeletionTargetType {
+  DATA_ROOM
+  FOLDER
+}
+
 /// Local profile mirrored from Supabase Auth.
 model User {
   id        String   @id // Matches auth.users.id from Supabase
@@ -40,6 +46,7 @@ model User {
   dataRooms      DataRoom[]
   shares         Share[]         @relation("SharedWithUser")
   uploadSessions UploadSession[]
+  deletionJobs   DeletionJob[]
 }
 
 /// Workspace that owns folders, files, and shares.
@@ -49,6 +56,8 @@ model DataRoom {
   description String?
   /// Supabase user who owns the workspace.
   ownerId     String
+  /// Set while a durable deletion job removes its contents.
+  deletionRequestedAt DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -57,8 +66,10 @@ model DataRoom {
   files          File[]
   shares         Share[]
   uploadSessions UploadSession[]
+  deletionJobs   DeletionJob[]
 
   @@index([ownerId, updatedAt])
+  @@index([ownerId, deletionRequestedAt])
 }
 
 /// Hierarchical container within a Data Room.
@@ -70,6 +81,8 @@ model Folder {
   /// Materialized path used for subtree queries.
   path       String
   depth      Int      @default(0)
+  /// Set on the root of a subtree queued for deletion.
+  deletionRequestedAt DateTime?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -79,11 +92,13 @@ model Folder {
   files          File[]
   shares         Share[]
   uploadSessions UploadSession[]
+  deletionJobs   DeletionJob[]
 
   @@unique([dataRoomId, parentId, name])
   @@index([dataRoomId, parentId, name])
   @@index([dataRoomId, parentId, name, id])
   @@index([dataRoomId, path])
+  @@index([dataRoomId, deletionRequestedAt])
 }
 
 /// Metadata for a private file in Supabase Storage.
@@ -127,6 +142,32 @@ model UploadSession {
 
   @@index([ownerId, expiresAt])
   @@index([dataRoomId, folderId])
+}
+
+/// Durable, idempotent work item for deleting a large Data Room or folder subtree.
+model DeletionJob {
+  id            String             @id @default(uuid())
+  dataRoomId    String
+  folderId      String?
+  targetType    DeletionTargetType
+  /// Captures a folder scope even if the folder relation is cleared on completion.
+  folderPath    String?
+  requestedById String
+  deletedFiles  Int                @default(0)
+  deletedUploads Int               @default(0)
+  completedAt   DateTime?
+  lockedUntil   DateTime?
+  lastError     String?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  dataRoom    DataRoom @relation(fields: [dataRoomId], references: [id], onDelete: Cascade)
+  folder      Folder?  @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  requestedBy User     @relation(fields: [requestedById], references: [id], onDelete: Cascade)
+
+  @@index([completedAt, lockedUntil])
+  @@index([dataRoomId, completedAt])
+  @@index([requestedById, completedAt])
 }
 
 /// Access grant for a room, folder, or file.

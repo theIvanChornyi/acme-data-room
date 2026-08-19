@@ -46,6 +46,13 @@ export interface FolderDeletionSummary {
   };
 }
 
+export interface DeletionJobProgress {
+  id: string;
+  deletedFiles: number;
+  deletedUploads: number;
+  completed: boolean;
+}
+
 export interface PublicShare {
   id: string;
   token: string;

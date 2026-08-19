@@ -60,6 +60,16 @@ export class DataRoomsController {
     return this.dataRooms.deleteRoom(roomId, user.id);
   }
 
+  // Process one bounded batch for a deletion requested by the owner.
+  @Post(ApiRoutes.DataRooms.processDeletionJob)
+  processDeletionJob(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param(ApiRouteParameters.roomId) roomId: string,
+    @Param(ApiRouteParameters.deletionJobId) deletionJobId: string,
+  ) {
+    return this.dataRooms.processDeletionJobForOwner(roomId, user.id, deletionJobId);
+  }
+
   // List room content with pagination.
   @Get(ApiRoutes.DataRooms.contents)
   contents(

@@ -24,6 +24,7 @@ export const ApiMessages = {
     parentFolderNotFound: 'Parent folder not found',
     destinationFolderNotFound: 'Destination folder not found',
     folderNameConflict: 'A folder with this name already exists here',
+    deletionInProgress: 'This content is already being deleted',
   },
   uploads: {
     unableToPrepare: 'Unable to prepare file upload',

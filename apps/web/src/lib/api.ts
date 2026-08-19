@@ -1,5 +1,6 @@
 import type {
   DataRoomSummary,
+  DeletionJobProgress,
   FolderDeletionSummary,
   FolderContents,
   PublicShare,
@@ -21,6 +22,7 @@ export type PublicShareTarget =
   | { targetType: typeof ShareTargetType.FOLDER; folderId: string }
   | { targetType: typeof ShareTargetType.FILE; fileId: string };
 export type FileSearchResults = { items: RoomItem[]; nextCursor: string | null };
+const deletionPollingDelayMilliseconds = 200;
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const { data } = (await supabase?.auth.getSession()) ?? { data: { session: null } };
@@ -107,7 +109,8 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ name, description }),
     }),
-  deleteRoom: (roomId: string) => request(ApiRoutes.DataRooms.room(roomId), { method: 'DELETE' }),
+  deleteRoom: (roomId: string) =>
+    request<DeletionJobProgress>(ApiRoutes.DataRooms.room(roomId), { method: 'DELETE' }),
   contents: (roomId: string, folderId?: string, cursor?: string) =>
     request<FolderContents>(
       `${ApiRoutes.DataRooms.contents(roomId)}${contentsQuery(folderId, cursor)}`,
@@ -165,7 +168,11 @@ export const api = {
   folderDeletionSummary: (roomId: string, folderId: string) =>
     request<FolderDeletionSummary>(ApiRoutes.DataRooms.folderDeletionSummary(roomId, folderId)),
   deleteFolder: (roomId: string, folderId: string) =>
-    request(ApiRoutes.DataRooms.folder(roomId, folderId), { method: 'DELETE' }),
+    request<DeletionJobProgress>(ApiRoutes.DataRooms.folder(roomId, folderId), { method: 'DELETE' }),
+  processDeletionJob: (roomId: string, jobId: string) =>
+    request<DeletionJobProgress>(ApiRoutes.DataRooms.processDeletionJob(roomId, jobId), {
+      method: 'POST',
+    }),
   uploadFile: async (
     roomId: string,
     folderId: string | undefined,
@@ -234,3 +241,18 @@ export const api = {
   sharedWithMeDownloadFile: (shareId: string, fileId: string) =>
     request<{ url: string }>(ApiRoutes.DataRooms.receivedShareDownloadFile(shareId, fileId)),
 };
+
+/** Keeps foreground deletion moving quickly; the authenticated maintenance worker resumes it later. */
+export async function processDeletionUntilComplete(
+  roomId: string,
+  initialJob: DeletionJobProgress,
+  onProgress?: (job: DeletionJobProgress) => void,
+) {
+  let job = initialJob;
+  while (!job.completed) {
+    await new Promise<void>((resolve) => window.setTimeout(resolve, deletionPollingDelayMilliseconds));
+    job = await api.processDeletionJob(roomId, job.id);
+    onProgress?.(job);
+  }
+  return job;
+}

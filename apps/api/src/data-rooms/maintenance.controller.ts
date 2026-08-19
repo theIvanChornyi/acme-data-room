@@ -8,12 +8,14 @@ import { ApiMessages } from '../common/messages';
 export class MaintenanceController {
   constructor(private readonly dataRooms: DataRoomsService) {}
 
-  // Remove expired upload sessions and objects.
+  // Remove expired uploads and advance queued large deletions.
   @Post(ApiRoutes.Maintenance.expiredUploads)
-  cleanupExpiredUploads(@Headers(ApiRequestHeaders.maintenanceSecret) suppliedSecret?: string) {
+  async cleanupExpiredUploads(@Headers(ApiRequestHeaders.maintenanceSecret) suppliedSecret?: string) {
     if (!this.isAuthorized(suppliedSecret))
       throw new ForbiddenException(ApiMessages.authorization.maintenanceAccessDenied);
-    return this.dataRooms.cleanupExpiredUploads();
+    const uploads = await this.dataRooms.cleanupExpiredUploads();
+    const deletions = await this.dataRooms.processPendingDeletionJobs();
+    return { uploads, deletions };
   }
 
   private isAuthorized(suppliedSecret: string | undefined) {

@@ -67,7 +67,7 @@ Deploy `apps/web` and `apps/api` as separate Vercel projects. Vercel runs the Ne
 2. Configure the web app with `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and `VITE_API_URL=https://<your-api-domain>/api`.
 3. Add the production web URL to Supabase Auth redirect URLs and to the Google OAuth client’s authorized redirect origins.
 4. Run `pnpm db:migrate` against production before releasing the API.
-5. Generate a long random `UPLOAD_CLEANUP_SECRET`, set it on the API host, replace the two placeholders in [`supabase/migrations/0002_schedule_expired_upload_cleanup.sql`](supabase/migrations/0002_schedule_expired_upload_cleanup.sql), then run that script in the Supabase SQL editor. It stores the API URL and secret in Vault and uses Supabase Cron plus `pg_net` to invoke the cleanup every hour.
+5. Generate a long random `UPLOAD_CLEANUP_SECRET`, set it on the API host, replace the two placeholders in [`supabase/migrations/0002_schedule_expired_upload_cleanup.sql`](supabase/migrations/0002_schedule_expired_upload_cleanup.sql), then run that script in the Supabase SQL editor. It stores the API URL and secret in Vault and uses Supabase Cron plus `pg_net` every five minutes for upload cleanup and durable deletion jobs. If this Cron job already exists, run [`supabase/migrations/0003_reschedule_maintenance.sql`](supabase/migrations/0003_reschedule_maintenance.sql) instead; it reuses the existing Vault secrets.
 
 The resulting job is named `cleanup-expired-uploads`. Monitor its scheduling in **Integrations → Cron** and inspect the HTTP response from `pg_net` in the SQL editor when investigating a failed run.
 
@@ -83,7 +83,8 @@ GitHub Actions secrets such as `VERCEL_TOKEN`, `VERCEL_ORG_ID`, and `VERCEL_PROJ
 
 - **Authorization is server-side.** The API validates the Supabase access token before every owner or permissioned-share request, syncs only the authenticated user ID/email, and derives access from a non-revoked `Share` row.
 - **Private storage and uploads.** PDFs stay in a private bucket. The API authorizes access and returns short-lived view/download URLs only for allowed files. For uploads, it creates a one-file signed upload URL after checking ownership, folder, file name, and size; the browser sends the bytes directly to Storage and the API verifies the stored object before publishing its `File` record. This avoids buffering files in the API while retaining per-file browser progress.
-- **Expired uploads.** A Supabase Cron job calls a separately authenticated maintenance endpoint hourly. It processes at most 500 expired sessions per run in batches of 100, removes each object with the Storage API, and only then deletes its metadata row. Failed batches remain eligible for the next idempotent run.
+- **Background deletion.** Deleting a Data Room or folder queues a durable `DeletionJob`. Each API or maintenance invocation claims one job with a short lease and removes at most 100 storage objects before deleting the matching metadata. The browser advances its own job while open; the authenticated Supabase Cron worker retries unfinished work every five minutes. A queued scope rejects new writes, and its active shares are revoked immediately.
+- **Expired uploads.** The same Supabase Cron worker processes at most 500 expired upload sessions per run in batches of 100, removes each object with the Storage API, and only then deletes its metadata row. Failed batches remain eligible for the next idempotent run.
 - **Scoping.** A share targets one Data Room, folder, or file. Folder access is checked with the shared folder’s materialized `path`, so a recipient can traverse descendants but never parents or siblings.
 - **Names.** Folder names are unique within a parent. File collisions resolve to the next available suffix on upload, rename, and move.
 - **Revocation.** Revoking sets `revokedAt`; all permissioned and public read endpoints check it before returning metadata or a signed file URL.
@@ -96,20 +97,24 @@ erDiagram
   DataRoom ||--o{ Folder : contains
   DataRoom ||--o{ File : contains
   DataRoom ||--o{ UploadSession : stages
+  DataRoom ||--o{ DeletionJob : deletes
   Folder ||--o{ Folder : nests
   Folder ||--o{ File : contains
   Folder ||--o{ UploadSession : stages
+  Folder ||--o{ DeletionJob : scopes
   DataRoom ||--o{ Share : has
   Folder ||--o{ Share : targets
   File ||--o{ Share : targets
   User ||--o{ Share : receives
   User ||--o{ UploadSession : starts
+  User ||--o{ DeletionJob : requests
 
   User { string id PK string email }
   DataRoom { string id PK string ownerId FK string name }
   Folder { string id PK string parentId FK string path int depth }
   File { string id PK string folderId FK string storagePath bigint sizeBytes }
   UploadSession { string id PK string folderId FK string storagePath bigint sizeBytes datetime expiresAt }
+  DeletionJob { string id PK string dataRoomId FK string folderId FK string targetType string folderPath int deletedFiles datetime completedAt datetime lockedUntil }
   Share { string id PK string targetType string accessType string recipientId FK string recipientEmail string token string role string description datetime revokedAt }
 ```
 
@@ -123,7 +128,7 @@ For small and medium folders, aggregate `COUNT(*)` and `SUM(sizeBytes)` for file
 
 ### One Data Room with 100,000 files
 
-Never fetch every file in a folder. The API lists only direct children in stable folder-first order with a keyset cursor (`kind`, `name`, `id`) and a bounded page size of 50 by default (100 maximum). The UI exposes Previous/Next and numbered controls for already visited cursor pages. Matching `(dataRoomId, parentId/folderId, name, id)` B-tree indexes support both the scope predicate and cursor comparison. The sidebar fetches only root folders initially and fetches each branch when it is expanded; the full folder-options list is requested only when the Move dialog opens. File-name search is server-side, debounced, Data Room-scoped, and cursor-paginated; a `pg_trgm` GIN index makes three-or-more-character substring queries scalable. Upload/deletion fan-out and stats reconciliation move to idempotent background jobs backed by an outbox.
+Never fetch every file in a folder. The API lists only direct children in stable folder-first order with a keyset cursor (`kind`, `name`, `id`) and a bounded page size of 50 by default (100 maximum). The UI exposes Previous/Next and numbered controls for already visited cursor pages. Matching `(dataRoomId, parentId/folderId, name, id)` B-tree indexes support both the scope predicate and cursor comparison. The sidebar fetches only root folders initially and fetches each branch when it is expanded; the full folder-options list is requested only when the Move dialog opens. File-name search is server-side, debounced, Data Room-scoped, and cursor-paginated; a `pg_trgm` GIN index makes three-or-more-character substring queries scalable. `DeletionJob` keeps storage and metadata cleanup bounded to 100 objects per batch with a lease for idempotent retries; at larger volume, dispatch the same jobs through a dedicated outbox worker.
 
 ### Extending sharing to viewer/editor roles
 

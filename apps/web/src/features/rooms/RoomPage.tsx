@@ -5,6 +5,7 @@ import { Pencil, Search, Share2, X } from 'lucide-react';
 import {
   ShareTargetType,
   type DataRoomSummary,
+  type DeletionJobProgress,
   type FolderDeletionSummary,
   type FolderContents,
   type RoomItem,
@@ -21,7 +22,7 @@ import { RoomContents, type ItemAction } from '../../components/RoomContents';
 import { ShareDialog } from '../../components/ShareDialog';
 import { UploadSnackbar, type UploadSnackbarItem } from '../../components/UploadSnackbar';
 import { WorkspaceDropzone } from '../../components/WorkspaceDropzone';
-import { api, type PublicShareTarget } from '../../lib/api';
+import { api, processDeletionUntilComplete, type PublicShareTarget } from '../../lib/api';
 import { messageFrom, WebMessages } from '../../lib/messages';
 import { QueryKeys } from '../../lib/query-keys';
 import { AppRoutes } from '../../routes/app-routes';
@@ -41,6 +42,7 @@ export function RoomPage() {
   const [searchCursors, setSearchCursors] = useState<Array<string | undefined>>([undefined]);
   const [searchPageIndex, setSearchPageIndex] = useState(0);
   const [actionError, setActionError] = useState('');
+  const [deletionNotice, setDeletionNotice] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [newFolderParentId, setNewFolderParentId] = useState<string | null>(null);
   const [dataRoomDialog, setDataRoomDialog] = useState<DataRoomSummary | undefined | null>(null);
@@ -242,17 +244,32 @@ export function RoomPage() {
           : current,
     );
     try {
-      await workspaceMutation.mutateAsync(() =>
+      const result = await workspaceMutation.mutateAsync(() =>
         removed.kind === 'folder'
           ? api.deleteFolder(roomId, removed.id)
           : api.deleteFile(roomId, removed.id),
       );
+      if (removed.kind === 'folder') void continueDeletion(result as DeletionJobProgress);
     } catch (cause) {
       refreshContents();
       throw cause;
     } finally {
       refreshContents();
       refreshFolders();
+    }
+  };
+  const continueDeletion = async (job: DeletionJobProgress) => {
+    setDeletionNotice(
+      job.completed ? WebMessages.workspace.deletionCompleted : WebMessages.workspace.deletionQueued,
+    );
+    if (job.completed) return;
+    try {
+      await processDeletionUntilComplete(roomId, job);
+      setDeletionNotice(WebMessages.workspace.deletionCompleted);
+      refreshContents();
+      refreshFolders();
+    } catch {
+      setDeletionNotice(WebMessages.workspace.deletionContinues);
     }
   };
   const dropFile = async (fileId: string, destinationId: string | null) => {
@@ -509,6 +526,8 @@ export function RoomPage() {
           >
             {actionError ? (
               <DismissibleError message={actionError} onClose={() => setActionError('')} />
+            ) : deletionNotice ? (
+              <DismissibleNotice message={deletionNotice} onClose={() => setDeletionNotice('')} />
             ) : queryErrorMessage ? (
               <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700" role="alert">
                 {queryErrorMessage}
@@ -648,6 +667,26 @@ function DismissibleError({ message, onClose }: { message: string; onClose: () =
         title="Dismiss error"
         aria-label="Dismiss error"
         className="-m-1 rounded p-1 text-red-500 hover:bg-red-100 hover:text-red-800"
+      >
+        <X size={17} />
+      </button>
+    </div>
+  );
+}
+
+function DismissibleNotice({ message, onClose }: { message: string; onClose: () => void }) {
+  return (
+    <div
+      className="flex items-start justify-between gap-3 rounded-lg bg-blue-50 p-3 text-sm text-brand"
+      role="status"
+    >
+      <span>{message}</span>
+      <button
+        type="button"
+        onClick={onClose}
+        title="Dismiss notice"
+        aria-label="Dismiss notice"
+        className="-m-1 rounded p-1 text-blue-600 hover:bg-blue-100 hover:text-blue-800"
       >
         <X size={17} />
       </button>

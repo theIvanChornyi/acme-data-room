@@ -10,12 +10,12 @@ select vault.create_secret(
   'upload_cleanup_secret'
 );
 
--- Runs at 17 minutes past every hour. pg_net makes the HTTP request without
+-- Runs every five minutes. pg_net makes the HTTP request without
 -- granting the database access to the private storage bucket; the API uses the
 -- Storage API to remove an object and deletes its UploadSession only afterwards.
 select cron.schedule(
   'cleanup-expired-uploads',
-  '17 * * * *',
+  '*/5 * * * *',
   $job$
     select net.http_post(
       url := (select decrypted_secret from vault.decrypted_secrets where name = 'upload_cleanup_url'),

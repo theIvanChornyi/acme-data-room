@@ -7,7 +7,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { createClient } from '@supabase/supabase-js';
-import { ShareAccessType, ShareRole, ShareTargetType } from '@prisma/client';
+import { DeletionTargetType, ShareAccessType, ShareRole, ShareTargetType } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateDataRoomDto } from './dto/create-data-room.dto';
@@ -46,7 +46,10 @@ export class DataRoomsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async list(ownerId: string) {
-    return this.prisma.dataRoom.findMany({ where: { ownerId }, orderBy: { updatedAt: 'desc' } });
+    return this.prisma.dataRoom.findMany({
+      where: { ownerId, deletionRequestedAt: null },
+      orderBy: { updatedAt: 'desc' },
+    });
   }
 
   async create(ownerId: string, email: string, dto: CreateDataRoomDto) {
@@ -73,17 +76,37 @@ export class DataRoomsService {
   }
 
   async deleteRoom(roomId: string, ownerId: string) {
-    await this.assertOwner(roomId, ownerId);
-    const [files, uploads] = await this.prisma.$transaction([
-      this.prisma.file.findMany({ where: { dataRoomId: roomId }, select: { storagePath: true } }),
-      this.prisma.uploadSession.findMany({
-        where: { dataRoomId: roomId },
-        select: { storagePath: true },
-      }),
-    ]);
-    await this.removeStorageObjects([...files, ...uploads].map((item) => item.storagePath));
-    await this.prisma.dataRoom.delete({ where: { id: roomId } });
-    return { deleted: { files: files.length } };
+    const room = await this.prisma.dataRoom.findFirst({ where: { id: roomId, ownerId } });
+    if (!room) throw new ForbiddenException(ApiMessages.authorization.roomAccessDenied);
+    const existing = await this.prisma.deletionJob.findFirst({
+      where: {
+        dataRoomId: roomId,
+        targetType: DeletionTargetType.DATA_ROOM,
+        completedAt: null,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (existing) return this.serializeDeletionJob(existing);
+
+    const requestedAt = new Date();
+    const job = await this.prisma.$transaction(async (transaction) => {
+      await transaction.dataRoom.update({
+        where: { id: roomId },
+        data: { deletionRequestedAt: requestedAt },
+      });
+      await transaction.share.updateMany({
+        where: { dataRoomId: roomId, revokedAt: null },
+        data: { revokedAt: requestedAt },
+      });
+      return transaction.deletionJob.create({
+        data: {
+          dataRoomId: roomId,
+          requestedById: ownerId,
+          targetType: DeletionTargetType.DATA_ROOM,
+        },
+      });
+    });
+    return this.processDeletionJob(job.id);
   }
 
   async contents(roomId: string, ownerId: string, dto: ContentsQueryDto) {
@@ -427,13 +450,20 @@ export class DataRoomsService {
 
   private async roomContents(roomId: string, dto: ContentsQueryDto) {
     const folderId = dto.folderId;
-    let folder: { id: string; name: string; parentId: string | null; path: string } | null = null;
+    let folder: {
+      id: string;
+      name: string;
+      parentId: string | null;
+      dataRoomId: string;
+      path: string;
+    } | null = null;
     if (folderId) {
       folder = await this.prisma.folder.findFirst({
         where: { id: folderId, dataRoomId: roomId },
-        select: { id: true, name: true, parentId: true, path: true },
+        select: { id: true, name: true, parentId: true, dataRoomId: true, path: true },
       });
       if (!folder) throw new NotFoundException(ApiMessages.resources.folderNotFound);
+      await this.assertFolderWritable(folder);
     }
     const { items, nextCursor } = await this.listDirectChildren(
       roomId,
@@ -457,6 +487,7 @@ export class DataRoomsService {
       : null;
     if (dto.parentId && !parent)
       throw new NotFoundException(ApiMessages.resources.parentFolderNotFound);
+    if (parent) await this.assertFolderWritable(parent);
     const id = crypto.randomUUID();
     const path = `${parent?.path ?? DataRoomStorage.rootPath}${id}/`;
     try {
@@ -482,7 +513,7 @@ export class DataRoomsService {
   async listFolders(roomId: string, ownerId: string, parentId?: string) {
     await this.assertOwner(roomId, ownerId);
     const folders = await this.prisma.folder.findMany({
-      where: { dataRoomId: roomId, parentId: parentId ?? null },
+      where: { dataRoomId: roomId, parentId: parentId ?? null, deletionRequestedAt: null },
       select: {
         id: true,
         name: true,
@@ -501,7 +532,7 @@ export class DataRoomsService {
   async listFolderOptions(roomId: string, ownerId: string) {
     await this.assertOwner(roomId, ownerId);
     return this.prisma.folder.findMany({
-      where: { dataRoomId: roomId },
+      where: { dataRoomId: roomId, deletionRequestedAt: null },
       select: { id: true, name: true, parentId: true, depth: true },
       orderBy: { path: 'asc' },
     });
@@ -513,6 +544,7 @@ export class DataRoomsService {
       where: { id: folderId, dataRoomId: roomId },
     });
     if (!folder) throw new NotFoundException(ApiMessages.resources.folderNotFound);
+    await this.assertFolderWritable(folder);
     try {
       const renamed = await this.prisma.folder.update({
         where: { id: folder.id },
@@ -582,28 +614,40 @@ export class DataRoomsService {
       where: { id: folderId, dataRoomId: roomId },
     });
     if (!folder) throw new NotFoundException(ApiMessages.resources.folderNotFound);
-    const folders = await this.prisma.folder.findMany({
-      where: { dataRoomId: roomId, path: { startsWith: folder.path } },
-      select: { id: true },
+    const existing = await this.prisma.deletionJob.findFirst({
+      where: { folderId, completedAt: null },
+      orderBy: { createdAt: 'desc' },
     });
-    const folderIds = folders.map((item) => item.id);
-    const [files, uploads] = await this.prisma.$transaction([
-      this.prisma.file.findMany({
-        where: { dataRoomId: roomId, folderId: { in: folderIds } },
-        select: { id: true, storagePath: true },
-      }),
-      this.prisma.uploadSession.findMany({
-        where: { dataRoomId: roomId, folderId: { in: folderIds } },
-        select: { storagePath: true },
-      }),
-    ]);
-    await this.removeStorageObjects([...files, ...uploads].map((item) => item.storagePath));
-    await this.prisma.$transaction([
-      this.prisma.file.deleteMany({ where: { id: { in: files.map((file) => file.id) } } }),
-      this.prisma.folder.delete({ where: { id: folder.id } }),
-      this.prisma.dataRoom.update({ where: { id: roomId }, data: { updatedAt: new Date() } }),
-    ]);
-    return { deleted: { folders: folders.length, files: files.length } };
+    if (existing) return this.serializeDeletionJob(existing);
+
+    const requestedAt = new Date();
+    const job = await this.prisma.$transaction(async (transaction) => {
+      await transaction.folder.update({
+        where: { id: folder.id },
+        data: { deletionRequestedAt: requestedAt },
+      });
+      await transaction.share.updateMany({
+        where: {
+          dataRoomId: roomId,
+          revokedAt: null,
+          OR: [
+            { folder: { path: { startsWith: folder.path } } },
+            { file: { folder: { path: { startsWith: folder.path } } } },
+          ],
+        },
+        data: { revokedAt: requestedAt },
+      });
+      return transaction.deletionJob.create({
+        data: {
+          dataRoomId: roomId,
+          folderId: folder.id,
+          folderPath: folder.path,
+          requestedById: ownerId,
+          targetType: DeletionTargetType.FOLDER,
+        },
+      });
+    });
+    return this.processDeletionJob(job.id);
   }
 
   async createUploadUrl(roomId: string, ownerId: string, dto: CreateUploadUrlDto) {
@@ -614,6 +658,7 @@ export class DataRoomsService {
         where: { id: dto.folderId, dataRoomId: roomId },
       });
       if (!folder) throw new NotFoundException(ApiMessages.resources.folderNotFound);
+      await this.assertFolderWritable(folder);
     }
     await this.ensureBucket();
     const uploadId = crypto.randomUUID();
@@ -770,10 +815,46 @@ export class DataRoomsService {
     };
   }
 
+  /** Runs one bounded batch for each available job. Safe to call from cron or the owner UI. */
+  async processPendingDeletionJobs(maxJobs = DataRoomStorage.deletion.maintenanceJobsPerRun) {
+    const now = new Date();
+    const jobs = await this.prisma.deletionJob.findMany({
+      where: {
+        completedAt: null,
+        OR: [{ lockedUntil: null }, { lockedUntil: { lt: now } }],
+      },
+      orderBy: { createdAt: 'asc' },
+      take: maxJobs,
+      select: { id: true },
+    });
+    let completed = 0;
+    let failed = 0;
+    for (const job of jobs) {
+      try {
+        const result = await this.processDeletionJob(job.id);
+        if (result.completed) completed += 1;
+      } catch (error) {
+        failed += 1;
+        console.error('Unable to process deletion job', error);
+      }
+    }
+    return { scanned: jobs.length, completed, failed, hasMore: jobs.length === maxJobs };
+  }
+
+  async processDeletionJobForOwner(roomId: string, ownerId: string, jobId: string) {
+    const job = await this.prisma.deletionJob.findFirst({
+      where: { id: jobId, dataRoomId: roomId, requestedById: ownerId },
+      select: { id: true },
+    });
+    if (!job) throw new NotFoundException(ApiMessages.resources.fileNotFound);
+    return this.processDeletionJob(job.id);
+  }
+
   async createViewUrl(roomId: string, ownerId: string, fileId: string) {
     await this.assertOwner(roomId, ownerId);
     const file = await this.prisma.file.findFirst({ where: { id: fileId, dataRoomId: roomId } });
     if (!file) throw new NotFoundException(ApiMessages.resources.fileNotFound);
+    await this.assertFileWritable(file);
     return this.createStorageUrl(file.storagePath);
   }
 
@@ -781,6 +862,7 @@ export class DataRoomsService {
     await this.assertOwner(roomId, ownerId);
     const file = await this.prisma.file.findFirst({ where: { id: fileId, dataRoomId: roomId } });
     if (!file) throw new NotFoundException(ApiMessages.resources.fileNotFound);
+    await this.assertFileWritable(file);
     return this.createStorageUrl(file.storagePath, true);
   }
 
@@ -788,6 +870,7 @@ export class DataRoomsService {
     await this.assertOwner(roomId, ownerId);
     const file = await this.prisma.file.findFirst({ where: { id: fileId, dataRoomId: roomId } });
     if (!file) throw new NotFoundException(ApiMessages.resources.fileNotFound);
+    await this.assertFileWritable(file);
     const renamed = await this.withAvailableFileName(
       roomId,
       file.folderId,
@@ -809,11 +892,13 @@ export class DataRoomsService {
     await this.assertOwner(roomId, ownerId);
     const file = await this.prisma.file.findFirst({ where: { id: fileId, dataRoomId: roomId } });
     if (!file) throw new NotFoundException(ApiMessages.resources.fileNotFound);
+    await this.assertFileWritable(file);
     if (destinationFolderId) {
       const folder = await this.prisma.folder.findFirst({
         where: { id: destinationFolderId, dataRoomId: roomId },
       });
       if (!folder) throw new NotFoundException(ApiMessages.resources.destinationFolderNotFound);
+      await this.assertFolderWritable(folder);
     }
     const destination = destinationFolderId ?? null;
     if (file.folderId === destination) return { ...file, sizeBytes: file.sizeBytes.toString() };
@@ -835,6 +920,7 @@ export class DataRoomsService {
     await this.assertOwner(destinationRoomId, ownerId);
     const file = await this.prisma.file.findFirst({ where: { id: fileId, dataRoomId: roomId } });
     if (!file) throw new NotFoundException(ApiMessages.resources.fileNotFound);
+    await this.assertFileWritable(file);
     const storagePath = `${destinationRoomId}/${DataRoomStorage.rootFolder}/${crypto.randomUUID()}${DataRoomStorage.upload.extension}`;
     const { error: storageError } = await this.storage()
       .storage.from(this.storageBucket)
@@ -874,6 +960,7 @@ export class DataRoomsService {
     await this.assertOwner(roomId, ownerId);
     const file = await this.prisma.file.findFirst({ where: { id: fileId, dataRoomId: roomId } });
     if (!file) throw new NotFoundException(ApiMessages.resources.fileNotFound);
+    await this.assertFileWritable(file);
     await this.removeStorageObjects([file.storagePath]);
     await this.prisma.file.delete({ where: { id: file.id } });
     await this.touchRoom(roomId);
@@ -883,7 +970,27 @@ export class DataRoomsService {
   private async assertOwner(roomId: string, ownerId: string) {
     const room = await this.prisma.dataRoom.findFirst({ where: { id: roomId, ownerId } });
     if (!room) throw new ForbiddenException(ApiMessages.authorization.roomAccessDenied);
+    if (room.deletionRequestedAt)
+      throw new ConflictException(ApiMessages.resources.deletionInProgress);
     return room;
+  }
+
+  private async assertFolderWritable(folder: { dataRoomId: string; path: string }) {
+    const deletingRoots = await this.prisma.folder.findMany({
+      where: { dataRoomId: folder.dataRoomId, deletionRequestedAt: { not: null } },
+      select: { path: true },
+    });
+    if (deletingRoots.some((root) => folder.path.startsWith(root.path)))
+      throw new ConflictException(ApiMessages.resources.deletionInProgress);
+  }
+
+  private async assertFileWritable(file: { dataRoomId: string; folderId: string | null }) {
+    if (!file.folderId) return;
+    const folder = await this.prisma.folder.findFirst({
+      where: { id: file.folderId, dataRoomId: file.dataRoomId },
+      select: { dataRoomId: true, path: true },
+    });
+    if (folder) await this.assertFolderWritable(folder);
   }
 
   private shareTargetWhere(dto: CreatePublicShareDto) {
@@ -905,18 +1012,20 @@ export class DataRoomsService {
         throw new BadRequestException(ApiMessages.shares.chooseFolderTarget);
       const folder = await this.prisma.folder.findFirst({
         where: { id: dto.folderId, dataRoomId: roomId },
-        select: { id: true },
+        select: { id: true, dataRoomId: true, path: true },
       });
       if (!folder) throw new NotFoundException(ApiMessages.resources.folderNotFound);
+      await this.assertFolderWritable(folder);
       return;
     }
     if (!dto.fileId || dto.folderId)
       throw new BadRequestException(ApiMessages.shares.chooseFileTarget);
     const file = await this.prisma.file.findFirst({
       where: { id: dto.fileId, dataRoomId: roomId },
-      select: { id: true },
+      select: { id: true, dataRoomId: true, folderId: true },
     });
     if (!file) throw new NotFoundException(ApiMessages.resources.fileNotFound);
+    await this.assertFileWritable(file);
   }
 
   private async activePublicShare(token: string) {
@@ -1045,6 +1154,7 @@ export class DataRoomsService {
     const folderWhere = {
       dataRoomId: roomId,
       parentId: folderId,
+      deletionRequestedAt: null,
       ...(cursor?.kind === 'folder'
         ? { OR: [{ name: { gt: cursor.name } }, { name: cursor.name, id: { gt: cursor.id } }] }
         : {}),
@@ -1167,6 +1277,151 @@ export class DataRoomsService {
         .remove(paths.slice(index, index + DataRoomStorage.maxObjectsPerDelete));
       if (error) throw new InternalServerErrorException(ApiMessages.uploads.unableToRemoveFiles);
     }
+  }
+
+  private async processDeletionJob(jobId: string) {
+    const now = new Date();
+    const lockExpiresAt = new Date(now.getTime() + DataRoomStorage.deletion.leaseMilliseconds);
+    const claimed = await this.prisma.deletionJob.updateMany({
+      where: {
+        id: jobId,
+        completedAt: null,
+        OR: [{ lockedUntil: null }, { lockedUntil: { lt: now } }],
+      },
+      data: { lockedUntil: lockExpiresAt, lastError: null },
+    });
+    if (!claimed.count) {
+      const existing = await this.prisma.deletionJob.findUnique({ where: { id: jobId } });
+      return existing
+        ? this.serializeDeletionJob(existing)
+        : { id: jobId, deletedFiles: 0, deletedUploads: 0, completed: true };
+    }
+
+    const job = await this.prisma.deletionJob.findUnique({ where: { id: jobId } });
+    if (!job) return { id: jobId, deletedFiles: 0, deletedUploads: 0, completed: true };
+    if (job.targetType === DeletionTargetType.FOLDER && !job.folderPath)
+      throw new InternalServerErrorException(ApiMessages.resources.deletionInProgress);
+    const fileWhere = this.deletionFileWhere(job);
+    const files = await this.prisma.file.findMany({
+      where: fileWhere,
+      orderBy: { id: 'asc' },
+      take: DataRoomStorage.deletion.batchSize,
+      select: { id: true, storagePath: true },
+    });
+    const uploads = files.length < DataRoomStorage.deletion.batchSize
+      ? await this.prisma.uploadSession.findMany({
+          where: this.deletionUploadWhere(job),
+          orderBy: { id: 'asc' },
+          take: DataRoomStorage.deletion.batchSize - files.length,
+          select: { id: true, storagePath: true },
+        })
+      : [];
+
+    try {
+      await this.removeStorageObjects([...files, ...uploads].map((item) => item.storagePath));
+      const updatedJob = await this.prisma.$transaction(async (transaction) => {
+        if (files.length)
+          await transaction.file.deleteMany({ where: { id: { in: files.map((file) => file.id) } } });
+        if (uploads.length)
+          await transaction.uploadSession.deleteMany({
+            where: { id: { in: uploads.map((upload) => upload.id) } },
+          });
+        return transaction.deletionJob.update({
+          where: { id: job.id },
+          data: {
+            deletedFiles: { increment: files.length },
+            deletedUploads: { increment: uploads.length },
+            lockedUntil: null,
+          },
+        });
+      });
+      const [remainingFiles, remainingUploads] = await this.prisma.$transaction([
+        this.prisma.file.count({ where: fileWhere }),
+        this.prisma.uploadSession.count({ where: this.deletionUploadWhere(job) }),
+      ]);
+      if (remainingFiles || remainingUploads) return this.serializeDeletionJob(updatedJob);
+      return this.completeDeletionJob(updatedJob);
+    } catch (error) {
+      await this.prisma.deletionJob
+        .update({
+          where: { id: job.id },
+          data: { lockedUntil: null, lastError: error instanceof Error ? error.message.slice(0, 500) : 'Unknown error' },
+        })
+        .catch(() => undefined);
+      throw error;
+    }
+  }
+
+  private deletionFileWhere(job: {
+    dataRoomId: string;
+    targetType: DeletionTargetType;
+    folderPath: string | null;
+  }) {
+    return {
+      dataRoomId: job.dataRoomId,
+      ...(job.targetType === DeletionTargetType.FOLDER && job.folderPath
+        ? { folder: { path: { startsWith: job.folderPath } } }
+        : {}),
+    };
+  }
+
+  private deletionUploadWhere(job: {
+    dataRoomId: string;
+    targetType: DeletionTargetType;
+    folderPath: string | null;
+  }) {
+    return {
+      dataRoomId: job.dataRoomId,
+      ...(job.targetType === DeletionTargetType.FOLDER && job.folderPath
+        ? { folder: { path: { startsWith: job.folderPath } } }
+        : {}),
+    };
+  }
+
+  private async completeDeletionJob(job: {
+    id: string;
+    dataRoomId: string;
+    folderId: string | null;
+    targetType: DeletionTargetType;
+    deletedFiles: number;
+    deletedUploads: number;
+  }) {
+    if (job.targetType === DeletionTargetType.DATA_ROOM) {
+      await this.prisma.dataRoom.delete({ where: { id: job.dataRoomId } });
+      return {
+        id: job.id,
+        deletedFiles: job.deletedFiles,
+        deletedUploads: job.deletedUploads,
+        completed: true,
+      };
+    }
+    await this.prisma.$transaction(async (transaction) => {
+      if (job.folderId)
+        await transaction.folder.deleteMany({ where: { id: job.folderId, dataRoomId: job.dataRoomId } });
+      await transaction.dataRoom.update({
+        where: { id: job.dataRoomId },
+        data: { updatedAt: new Date() },
+      });
+      await transaction.deletionJob.update({
+        where: { id: job.id },
+        data: { completedAt: new Date(), lockedUntil: null },
+      });
+    });
+    return { id: job.id, deletedFiles: job.deletedFiles, deletedUploads: job.deletedUploads, completed: true };
+  }
+
+  private serializeDeletionJob(job: {
+    id: string;
+    deletedFiles: number;
+    deletedUploads: number;
+    completedAt: Date | null;
+  }) {
+    return {
+      id: job.id,
+      deletedFiles: job.deletedFiles,
+      deletedUploads: job.deletedUploads,
+      completed: Boolean(job.completedAt),
+    };
   }
 
   private validateUploadCandidate(name: string, sizeBytes: number) {

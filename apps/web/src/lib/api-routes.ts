@@ -32,6 +32,8 @@ export const ApiRoutes = {
     downloadFile: (roomId: string, fileId: string) => `${roomFile(roomId, fileId)}/download`,
     moveFile: (roomId: string, fileId: string) => `${roomFile(roomId, fileId)}/move`,
     moveFileToRoom: (roomId: string, fileId: string) => `${roomFile(roomId, fileId)}/move-to-room`,
+    processDeletionJob: (roomId: string, jobId: string) =>
+      `${room(roomId)}/deletion-jobs/${encodeURIComponent(jobId)}/process`,
     sharedWithMe: `${dataRooms}/shared-with-me`,
     receivedShareContents: (shareId: string) => `${dataRooms}/shared-with-me/${shareId}/contents`,
     receivedShareViewFile: (shareId: string, fileId: string) =>

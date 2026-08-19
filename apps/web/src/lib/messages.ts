@@ -35,6 +35,9 @@ export const WebMessages = {
         );
       return details.join(' ');
     },
+    deletionQueued: 'Deletion started. Large folders continue deleting in the background.',
+    deletionCompleted: 'Deletion completed.',
+    deletionContinues: 'Deletion is still in progress and will continue automatically.',
   },
   sharing: {
     invalidAccess: 'This shared access is invalid.',

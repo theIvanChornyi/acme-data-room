@@ -1,10 +1,15 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { MoreHorizontal, Pencil, Plus, Share2, ShieldCheck, Trash2 } from 'lucide-react';
-import { ShareTargetType, type DataRoomSummary, type ReceivedShare } from '@acme/contracts';
+import {
+  ShareTargetType,
+  type DataRoomSummary,
+  type DeletionJobProgress,
+  type ReceivedShare,
+} from '@acme/contracts';
 import { AppLayout } from '../../components/AppLayout';
 import { DataRoomDialog, DeleteDataRoomDialog } from '../../components/DataRoomDialog';
-import { api } from '../../lib/api';
+import { api, processDeletionUntilComplete } from '../../lib/api';
 import { messageFrom, WebMessages } from '../../lib/messages';
 import { AppRoutes } from '../../routes/app-routes';
 
@@ -16,6 +21,7 @@ export function DashboardPage() {
   const [editingRoom, setEditingRoom] = useState<DataRoomSummary | null | undefined>(null);
   const [deletingRoom, setDeletingRoom] = useState<DataRoomSummary | null>(null);
   const [menuRoomId, setMenuRoomId] = useState<string | null>(null);
+  const [deletionNotice, setDeletionNotice] = useState('');
 
   useEffect(() => {
     void Promise.all([api.rooms(), api.sharedWithMe()])
@@ -39,8 +45,22 @@ export function DashboardPage() {
 
   const deleteRoom = async () => {
     if (!deletingRoom) return;
-    await api.deleteRoom(deletingRoom.id);
-    setRooms((current) => current.filter((room) => room.id !== deletingRoom.id));
+    const roomId = deletingRoom.id;
+    const job = await api.deleteRoom(roomId);
+    setRooms((current) => current.filter((room) => room.id !== roomId));
+    void continueDeletion(roomId, job);
+  };
+  const continueDeletion = async (roomId: string, job: DeletionJobProgress) => {
+    setDeletionNotice(
+      job.completed ? WebMessages.workspace.deletionCompleted : WebMessages.workspace.deletionQueued,
+    );
+    if (job.completed) return;
+    try {
+      await processDeletionUntilComplete(roomId, job);
+      setDeletionNotice(WebMessages.workspace.deletionCompleted);
+    } catch {
+      setDeletionNotice(WebMessages.workspace.deletionContinues);
+    }
   };
 
   return (
@@ -60,6 +80,11 @@ export function DashboardPage() {
         </button>
       </div>
       {error && <p className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+      {deletionNotice && (
+        <p className="mb-4 rounded-lg bg-blue-50 p-3 text-sm text-brand" role="status">
+          {deletionNotice}
+        </p>
+      )}
       {loading ? (
         <p className="text-sm text-slate-500">Loading your workspace…</p>
       ) : (

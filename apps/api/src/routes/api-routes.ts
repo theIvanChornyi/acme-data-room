@@ -5,6 +5,7 @@ export const ApiRouteParameters = {
   folderId: 'folderId',
   fileId: 'fileId',
   uploadId: 'uploadId',
+  deletionJobId: 'deletionJobId',
   token: 'token',
 } as const;
 
@@ -20,6 +21,7 @@ const shareId = routeParameter(ApiRouteParameters.shareId);
 const folderId = routeParameter(ApiRouteParameters.folderId);
 const fileId = routeParameter(ApiRouteParameters.fileId);
 const uploadId = routeParameter(ApiRouteParameters.uploadId);
+const deletionJobId = routeParameter(ApiRouteParameters.deletionJobId);
 const token = routeParameter(ApiRouteParameters.token);
 
 /** Canonical Nest route patterns. Keep parameter names aligned with controller decorators. */
@@ -50,6 +52,7 @@ export const ApiRoutes = {
     downloadFile: `${roomId}/files/${fileId}/download`,
     moveFile: `${roomId}/files/${fileId}/move`,
     moveFileToRoom: `${roomId}/files/${fileId}/move-to-room`,
+    processDeletionJob: `${roomId}/deletion-jobs/${deletionJobId}/process`,
   },
   PublicShares: {
     controller: 'public/shares',

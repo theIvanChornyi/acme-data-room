@@ -7,6 +7,11 @@ export const DataRoomStorage = {
   signedUrlTtlSeconds: 10 * 60,
   uploadSessionTtlMilliseconds: 2 * 60 * 60 * 1000,
   maxObjectsPerDelete: 100,
+  deletion: {
+    batchSize: 100,
+    leaseMilliseconds: 60 * 1000,
+    maintenanceJobsPerRun: 5,
+  },
   upload: {
     extension: FileValidation.extension,
     mimeType: FileValidation.mimeType,
