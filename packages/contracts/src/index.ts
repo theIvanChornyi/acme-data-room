@@ -40,3 +40,18 @@ export interface PublicShareContents extends FolderContents {
   scopeName: string;
   targetType: 'DATA_ROOM' | 'FOLDER' | 'FILE';
 }
+
+export interface UserShare {
+  id: string;
+  email: string;
+  createdAt: string;
+}
+
+export interface ReceivedShare {
+  id: string;
+  targetType: 'DATA_ROOM' | 'FOLDER' | 'FILE';
+  targetName: string;
+  roomName: string;
+  sharedBy: string;
+  createdAt: string;
+}

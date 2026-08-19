@@ -1,4 +1,4 @@
-import type { DataRoomSummary, FolderContents, PublicShare, PublicShareContents, RoomItem } from '@acme/contracts';
+import type { DataRoomSummary, FolderContents, PublicShare, PublicShareContents, ReceivedShare, RoomItem, UserShare } from '@acme/contracts';
 import { supabase } from './supabase';
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3000/api';
@@ -36,6 +36,9 @@ export const api = {
   publicShares: (roomId: string, target: PublicShareTarget) => request<PublicShare[]>(`/data-rooms/${roomId}/shares/public?${new URLSearchParams(target).toString()}`),
   createPublicShare: (roomId: string, target: PublicShareTarget, description?: string) => request<PublicShare>(`/data-rooms/${roomId}/shares/public`, { method: 'POST', body: JSON.stringify({ ...target, description }) }),
   revokePublicShare: (roomId: string, shareId: string) => request(`/data-rooms/${roomId}/shares/public/${shareId}`, { method: 'DELETE' }),
+  userShares: (roomId: string, target: PublicShareTarget) => request<UserShare[]>(`/data-rooms/${roomId}/shares/users?${new URLSearchParams(target).toString()}`),
+  grantUserShare: (roomId: string, target: PublicShareTarget, email: string) => request<UserShare>(`/data-rooms/${roomId}/shares/users`, { method: 'POST', body: JSON.stringify({ ...target, email }) }),
+  revokeUserShare: (roomId: string, shareId: string) => request(`/data-rooms/${roomId}/shares/users/${shareId}`, { method: 'DELETE' }),
   createFolder: (roomId: string, name: string, parentId?: string) => request(`/data-rooms/${roomId}/folders`, { method: 'POST', body: JSON.stringify({ name, parentId }) }),
   folders: (roomId: string) => request<Array<{ id: string; name: string; parentId: string | null; depth: number }>>(`/data-rooms/${roomId}/folders`),
   renameFolder: (roomId: string, folderId: string, name: string) => request(`/data-rooms/${roomId}/folders/${folderId}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
@@ -70,4 +73,8 @@ export const api = {
   publicContents: (token: string, folderId?: string) => publicRequest<PublicShareContents>(`/public/shares/${token}/contents${folderId ? `?folderId=${folderId}` : ''}`),
   publicViewFile: (token: string, fileId: string) => publicRequest<{ url: string }>(`/public/shares/${token}/files/${fileId}/view`),
   publicDownloadFile: (token: string, fileId: string) => publicRequest<{ url: string }>(`/public/shares/${token}/files/${fileId}/download`),
+  sharedWithMe: () => request<ReceivedShare[]>('/data-rooms/shared-with-me'),
+  sharedWithMeContents: (shareId: string, folderId?: string) => request<PublicShareContents>(`/data-rooms/shared-with-me/${shareId}/contents${folderId ? `?folderId=${folderId}` : ''}`),
+  sharedWithMeViewFile: (shareId: string, fileId: string) => request<{ url: string }>(`/data-rooms/shared-with-me/${shareId}/files/${fileId}/view`),
+  sharedWithMeDownloadFile: (shareId: string, fileId: string) => request<{ url: string }>(`/data-rooms/shared-with-me/${shareId}/files/${fileId}/download`),
 };
