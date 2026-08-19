@@ -1,7 +1,7 @@
 import { IsOptional, IsUUID } from 'class-validator';
 
-export class UploadFilesDto {
+export class ListFoldersDto {
   @IsOptional()
   @IsUUID()
-  folderId?: string;
+  parentId?: string;
 }

@@ -1,0 +1,9 @@
+export function PageControls({ pageIndex, pageCount, hasNext, loading, onSelect, onNext }: { pageIndex: number; pageCount: number; hasNext: boolean; loading: boolean; onSelect: (pageIndex: number) => void; onNext: () => void }) {
+  if (pageCount <= 1 && !hasNext) return null;
+  const canGoNext = pageIndex < pageCount - 1 || hasNext;
+  const start = Math.max(0, pageIndex - 2);
+  const end = Math.min(pageCount - 1, pageIndex + 2);
+  const pages = Array.from({ length: end - start + 1 }, (_, index) => start + index);
+  const pageButton = (index: number) => <button key={index} type="button" aria-label={`Open page ${index + 1}`} aria-current={index === pageIndex ? 'page' : undefined} disabled={loading || index === pageIndex} onClick={() => onSelect(index)} className={`min-w-9 rounded-md px-2 py-1.5 text-sm font-medium disabled:cursor-not-allowed ${index === pageIndex ? 'bg-brand text-white' : 'text-slate-600 hover:bg-slate-100 disabled:opacity-50'}`}>{index + 1}</button>;
+  return <nav aria-label="Folder pages" className="mt-5 flex flex-wrap items-center justify-end gap-1.5"><button type="button" disabled={loading || pageIndex === 0} onClick={() => onSelect(pageIndex - 1)} className="rounded-md px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50">Previous</button>{start > 0 && <>{pageButton(0)}{start > 1 && <span className="px-1 text-sm text-slate-400">…</span>}</>}{pages.map(pageButton)}{end < pageCount - 1 && <>{end < pageCount - 2 && <span className="px-1 text-sm text-slate-400">…</span>}{pageButton(pageCount - 1)}</>}<button type="button" disabled={loading || !canGoNext} onClick={onNext} className="rounded-md px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50">Next</button></nav>;
+}

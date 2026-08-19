@@ -34,6 +34,7 @@ model User {
 
   dataRooms DataRoom[]
   shares    Share[]    @relation("SharedWithUser")
+  uploadSessions UploadSession[]
 }
 
 model DataRoom {
@@ -48,6 +49,7 @@ model DataRoom {
   folders Folder[]
   files   File[]
   shares  Share[]
+  uploadSessions UploadSession[]
 
   @@index([ownerId, updatedAt])
 }
@@ -67,9 +69,11 @@ model Folder {
   children Folder[]  @relation("FolderTree")
   files    File[]
   shares   Share[]
+  uploadSessions UploadSession[]
 
   @@unique([dataRoomId, parentId, name])
   @@index([dataRoomId, parentId, name])
+  @@index([dataRoomId, parentId, name, id])
   @@index([dataRoomId, path])
 }
 
@@ -90,6 +94,26 @@ model File {
 
   @@unique([dataRoomId, folderId, name])
   @@index([dataRoomId, folderId, name])
+  @@index([dataRoomId, folderId, name, id])
+}
+
+model UploadSession {
+  id          String   @id @default(uuid())
+  dataRoomId  String
+  folderId    String?
+  ownerId     String
+  name        String
+  storagePath String   @unique
+  sizeBytes   BigInt
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  dataRoom DataRoom @relation(fields: [dataRoomId], references: [id], onDelete: Cascade)
+  folder   Folder?   @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  owner    User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@index([ownerId, expiresAt])
+  @@index([dataRoomId, folderId])
 }
 
 model Share {
@@ -100,6 +124,7 @@ model Share {
   targetType  ShareTargetType
   accessType  ShareAccessType
   recipientId String?
+  recipientEmail String?
   token       String?         @unique
   description String?
   role        ShareRole       @default(VIEWER)
@@ -113,5 +138,6 @@ model Share {
   recipient User?    @relation("SharedWithUser", fields: [recipientId], references: [id], onDelete: Cascade)
 
   @@index([recipientId, revokedAt])
+  @@index([recipientEmail, revokedAt])
   @@index([token, revokedAt])
 }
