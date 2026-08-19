@@ -44,6 +44,7 @@ Use these values:
 - `DIRECT_URL`: Supabase **Connect** direct URL, used by Prisma migrations.
 - `VITE_API_URL`: `http://localhost:3000/api` locally.
 - `WEB_ORIGIN`: optional locally; set it to the frontend deployment URL in production.
+- `UPLOAD_CLEANUP_SECRET`: add this long random value only to `apps/api/.env` and the API host's environment variables. It authenticates the scheduled cleanup request and must never be added to `apps/web/.env` or a `VITE_*` variable.
 
 ### 2. Install, migrate, run
 
@@ -66,11 +67,15 @@ Deploy `apps/web` to Vercel and `apps/api` to a Node-capable host such as Railwa
 2. Configure the web app with `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and `VITE_API_URL=https://<your-api-domain>/api`.
 3. Add the production web URL to Supabase Auth redirect URLs and to the Google OAuth client’s authorized redirect origins.
 4. Run `pnpm db:migrate` against production before releasing the API.
+5. Generate a long random `UPLOAD_CLEANUP_SECRET`, set it on the API host, replace the two placeholders in [`supabase/migrations/0002_schedule_expired_upload_cleanup.sql`](supabase/migrations/0002_schedule_expired_upload_cleanup.sql), then run that script in the Supabase SQL editor. It stores the API URL and secret in Vault and uses Supabase Cron plus `pg_net` to invoke the cleanup every hour.
+
+The resulting job is named `cleanup-expired-uploads`. Monitor its scheduling in **Integrations → Cron** and inspect the HTTP response from `pg_net` in the SQL editor when investigating a failed run.
 
 ## Design decisions
 
 - **Authorization is server-side.** The API validates the Supabase access token before every owner or permissioned-share request, syncs only the authenticated user ID/email, and derives access from a non-revoked `Share` row.
 - **Private storage and uploads.** PDFs stay in a private bucket. The API authorizes access and returns short-lived view/download URLs only for allowed files. For uploads, it creates a one-file signed upload URL after checking ownership, folder, file name, and size; the browser sends the bytes directly to Storage and the API verifies the stored object before publishing its `File` record. This avoids buffering files in the API while retaining per-file browser progress.
+- **Expired uploads.** A Supabase Cron job calls a separately authenticated maintenance endpoint hourly. It processes at most 500 expired sessions per run in batches of 100, removes each object with the Storage API, and only then deletes its metadata row. Failed batches remain eligible for the next idempotent run.
 - **Scoping.** A share targets one Data Room, folder, or file. Folder access is checked with the shared folder’s materialized `path`, so a recipient can traverse descendants but never parents or siblings.
 - **Names.** Folder names are unique within a parent. File collisions resolve to the next available suffix on upload, rename, and move.
 - **Revocation.** Revoking sets `revokedAt`; all permissioned and public read endpoints check it before returning metadata or a signed file URL.

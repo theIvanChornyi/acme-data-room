@@ -671,6 +671,47 @@ export class DataRoomsService {
     return { deleted: true };
   }
 
+  /**
+   * Removes objects left behind when a signed direct-upload URL expires before
+   * it is completed. Storage is deleted first: a failed storage request keeps
+   * the session so the next run can retry without orphaning an object.
+   */
+  async cleanupExpiredUploads(limit = 500) {
+    const expiresBefore = new Date();
+    const uploads = await this.prisma.uploadSession.findMany({
+      where: { expiresAt: { lt: expiresBefore } },
+      orderBy: { expiresAt: 'asc' },
+      take: limit,
+      select: { id: true, storagePath: true },
+    });
+    let cleaned = 0;
+    let failed = 0;
+
+    for (let index = 0; index < uploads.length; index += 100) {
+      const batch = uploads.slice(index, index + 100);
+      try {
+        await this.removeStorageObjects(batch.map((upload) => upload.storagePath));
+        const result = await this.prisma.uploadSession.deleteMany({
+          where: {
+            id: { in: batch.map((upload) => upload.id) },
+            expiresAt: { lt: expiresBefore },
+          },
+        });
+        cleaned += result.count;
+      } catch (error) {
+        failed += batch.length;
+        console.error('Unable to clean up expired upload sessions', error);
+      }
+    }
+
+    return {
+      scanned: uploads.length,
+      cleaned,
+      failed,
+      hasMore: uploads.length === limit,
+    };
+  }
+
   async createViewUrl(roomId: string, ownerId: string, fileId: string) {
     await this.assertOwner(roomId, ownerId);
     const file = await this.prisma.file.findFirst({ where: { id: fileId, dataRoomId: roomId } });
