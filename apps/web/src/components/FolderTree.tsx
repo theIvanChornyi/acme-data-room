@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { DataRoomSummary } from '@acme/contracts';
 import { ChevronDown, ChevronRight, Folder, FolderOpen, Plus, ShieldCheck } from 'lucide-react';
 import { api } from '../lib/api';
+import { QueryKeys } from '../lib/query-keys';
 
 export interface TreeFolder {
   id: string;
@@ -40,7 +41,7 @@ function FolderNode({
     if (shouldExpand) setExpanded(true);
   }, [shouldExpand]);
   const childrenQuery = useQuery({
-    queryKey: ['folder-children', roomId, folder.id],
+    queryKey: QueryKeys.folderChildren(roomId, folder.id),
     queryFn: () => api.folders(roomId, folder.id),
     enabled: expanded && folder.hasChildren,
     staleTime: 30_000,
