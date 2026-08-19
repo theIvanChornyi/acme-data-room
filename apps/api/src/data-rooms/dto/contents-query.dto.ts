@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import { IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
+import { ValidationLimits } from '../../common/helpers/validation';
 
 export class ContentsQueryDto {
   @IsOptional()
@@ -8,13 +9,13 @@ export class ContentsQueryDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(512)
+  @MaxLength(ValidationLimits.cursorLength)
   cursor?: string;
 
   @IsOptional()
   @Type(() => Number)
   @IsInt()
-  @Min(1)
-  @Max(100)
+  @Min(ValidationLimits.pageSize.min)
+  @Max(ValidationLimits.pageSize.max)
   limit?: number;
 }

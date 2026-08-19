@@ -31,14 +31,17 @@ import { ApiRouteParameters, ApiRoutes } from '../routes/api-routes';
 export class DataRoomsController {
   constructor(private readonly dataRooms: DataRoomsService) {}
 
+  // List the caller's Data Rooms.
   @Get() list(@CurrentUser() user: AuthenticatedUser) {
     return this.dataRooms.list(user.id);
   }
 
+  // Create a Data Room for the caller.
   @Post() create(@CurrentUser() user: AuthenticatedUser, @Body() dto: CreateDataRoomDto) {
     return this.dataRooms.create(user.id, user.email, dto);
   }
 
+  // Rename a Data Room.
   @Patch(ApiRoutes.DataRooms.room)
   renameRoom(
     @CurrentUser() user: AuthenticatedUser,
@@ -48,6 +51,7 @@ export class DataRoomsController {
     return this.dataRooms.renameRoom(roomId, user.id, dto);
   }
 
+  // Delete a Data Room and its content.
   @Delete(ApiRoutes.DataRooms.room)
   deleteRoom(
     @CurrentUser() user: AuthenticatedUser,
@@ -56,6 +60,7 @@ export class DataRoomsController {
     return this.dataRooms.deleteRoom(roomId, user.id);
   }
 
+  // List room content with pagination.
   @Get(ApiRoutes.DataRooms.contents)
   contents(
     @CurrentUser() user: AuthenticatedUser,
@@ -65,6 +70,7 @@ export class DataRoomsController {
     return this.dataRooms.contents(roomId, user.id, dto);
   }
 
+  // Search files in a Data Room.
   @Get(ApiRoutes.DataRooms.search)
   searchFiles(
     @CurrentUser() user: AuthenticatedUser,
@@ -74,6 +80,7 @@ export class DataRoomsController {
     return this.dataRooms.searchFiles(roomId, user.id, dto);
   }
 
+  // List public links for a target.
   @Get(ApiRoutes.DataRooms.publicShares)
   listPublicShares(
     @CurrentUser() user: AuthenticatedUser,
@@ -83,6 +90,7 @@ export class DataRoomsController {
     return this.dataRooms.listPublicShares(roomId, user.id, dto);
   }
 
+  // Create a public link for a target.
   @Post(ApiRoutes.DataRooms.publicShares)
   createPublicShare(
     @CurrentUser() user: AuthenticatedUser,
@@ -92,6 +100,7 @@ export class DataRoomsController {
     return this.dataRooms.createPublicShare(roomId, user.id, dto);
   }
 
+  // Revoke a public link.
   @Delete(ApiRoutes.DataRooms.publicShare)
   revokePublicShare(
     @CurrentUser() user: AuthenticatedUser,
@@ -101,6 +110,7 @@ export class DataRoomsController {
     return this.dataRooms.revokePublicShare(roomId, user.id, shareId);
   }
 
+  // List user access grants for a target.
   @Get(ApiRoutes.DataRooms.userShares)
   listUserShares(
     @CurrentUser() user: AuthenticatedUser,
@@ -110,6 +120,7 @@ export class DataRoomsController {
     return this.dataRooms.listUserShares(roomId, user.id, dto);
   }
 
+  // Grant a user access to a target.
   @Post(ApiRoutes.DataRooms.userShares)
   grantUserShare(
     @CurrentUser() user: AuthenticatedUser,
@@ -119,6 +130,7 @@ export class DataRoomsController {
     return this.dataRooms.grantUserShare(roomId, user.id, dto);
   }
 
+  // Revoke a user's access grant.
   @Delete(ApiRoutes.DataRooms.userShare)
   revokeUserShare(
     @CurrentUser() user: AuthenticatedUser,
@@ -128,11 +140,13 @@ export class DataRoomsController {
     return this.dataRooms.revokeUserShare(roomId, user.id, shareId);
   }
 
+  // List content shared with the caller.
   @Get(ApiRoutes.DataRooms.sharedWithMe)
   sharedWithMe(@CurrentUser() user: AuthenticatedUser) {
     return this.dataRooms.sharedWithMe(user.id);
   }
 
+  // List content in a received share.
   @Get(ApiRoutes.DataRooms.receivedShareContents)
   sharedWithMeContents(
     @CurrentUser() user: AuthenticatedUser,
@@ -142,6 +156,7 @@ export class DataRoomsController {
     return this.dataRooms.userShareContents(shareId, user.id, dto);
   }
 
+  // Create a preview URL for a received file.
   @Get(ApiRoutes.DataRooms.receivedShareViewFile)
   sharedWithMeView(
     @CurrentUser() user: AuthenticatedUser,
@@ -151,6 +166,7 @@ export class DataRoomsController {
     return this.dataRooms.createUserShareViewUrl(shareId, user.id, fileId);
   }
 
+  // Create a download URL for a received file.
   @Get(ApiRoutes.DataRooms.receivedShareDownloadFile)
   sharedWithMeDownload(
     @CurrentUser() user: AuthenticatedUser,
@@ -160,6 +176,7 @@ export class DataRoomsController {
     return this.dataRooms.createUserShareDownloadUrl(shareId, user.id, fileId);
   }
 
+  // Create a folder in a Data Room.
   @Post(ApiRoutes.DataRooms.folders)
   createFolder(
     @CurrentUser() user: AuthenticatedUser,
@@ -169,6 +186,7 @@ export class DataRoomsController {
     return this.dataRooms.createFolder(roomId, user.id, dto);
   }
 
+  // List direct child folders.
   @Get(ApiRoutes.DataRooms.folders)
   listFolders(
     @CurrentUser() user: AuthenticatedUser,
@@ -178,6 +196,7 @@ export class DataRoomsController {
     return this.dataRooms.listFolders(roomId, user.id, dto.parentId);
   }
 
+  // List folders for move destinations.
   @Get(ApiRoutes.DataRooms.folderOptions)
   listFolderOptions(
     @CurrentUser() user: AuthenticatedUser,
@@ -186,6 +205,7 @@ export class DataRoomsController {
     return this.dataRooms.listFolderOptions(roomId, user.id);
   }
 
+  // Rename a folder.
   @Patch(ApiRoutes.DataRooms.folder)
   renameFolder(
     @CurrentUser() user: AuthenticatedUser,
@@ -196,6 +216,7 @@ export class DataRoomsController {
     return this.dataRooms.renameFolder(roomId, user.id, folderId, dto.name);
   }
 
+  // Preview the impact of deleting a folder.
   @Get(ApiRoutes.DataRooms.folderDeletionSummary)
   folderDeletionSummary(
     @CurrentUser() user: AuthenticatedUser,
@@ -205,6 +226,7 @@ export class DataRoomsController {
     return this.dataRooms.folderDeletionSummary(roomId, user.id, folderId);
   }
 
+  // Delete a folder subtree.
   @Delete(ApiRoutes.DataRooms.folder)
   deleteFolder(
     @CurrentUser() user: AuthenticatedUser,
@@ -214,6 +236,7 @@ export class DataRoomsController {
     return this.dataRooms.deleteFolder(roomId, user.id, folderId);
   }
 
+  // Start a direct file upload.
   @Post(ApiRoutes.DataRooms.uploadUrl)
   createUploadUrl(
     @CurrentUser() user: AuthenticatedUser,
@@ -223,6 +246,7 @@ export class DataRoomsController {
     return this.dataRooms.createUploadUrl(roomId, user.id, dto);
   }
 
+  // Confirm a completed upload.
   @Post(ApiRoutes.DataRooms.completeUpload)
   completeUpload(
     @CurrentUser() user: AuthenticatedUser,
@@ -232,6 +256,7 @@ export class DataRoomsController {
     return this.dataRooms.completeUpload(roomId, user.id, dto.uploadId);
   }
 
+  // Cancel a pending upload.
   @Delete(ApiRoutes.DataRooms.upload)
   cancelUpload(
     @CurrentUser() user: AuthenticatedUser,
@@ -241,6 +266,7 @@ export class DataRoomsController {
     return this.dataRooms.cancelUpload(roomId, user.id, uploadId);
   }
 
+  // Create a private preview URL.
   @Get(ApiRoutes.DataRooms.viewFile)
   viewFile(
     @CurrentUser() user: AuthenticatedUser,
@@ -250,6 +276,7 @@ export class DataRoomsController {
     return this.dataRooms.createViewUrl(roomId, user.id, fileId);
   }
 
+  // Create a private download URL.
   @Get(ApiRoutes.DataRooms.downloadFile)
   downloadFile(
     @CurrentUser() user: AuthenticatedUser,
@@ -259,6 +286,7 @@ export class DataRoomsController {
     return this.dataRooms.createDownloadUrl(roomId, user.id, fileId);
   }
 
+  // Rename a file.
   @Patch(ApiRoutes.DataRooms.file)
   renameFile(
     @CurrentUser() user: AuthenticatedUser,
@@ -269,6 +297,7 @@ export class DataRoomsController {
     return this.dataRooms.renameFile(roomId, user.id, fileId, dto.name);
   }
 
+  // Move a file within its Data Room.
   @Patch(ApiRoutes.DataRooms.moveFile)
   moveFile(
     @CurrentUser() user: AuthenticatedUser,
@@ -279,6 +308,7 @@ export class DataRoomsController {
     return this.dataRooms.moveFile(roomId, user.id, fileId, dto.folderId);
   }
 
+  // Move a file to another Data Room.
   @Patch(ApiRoutes.DataRooms.moveFileToRoom)
   moveFileToRoom(
     @CurrentUser() user: AuthenticatedUser,
@@ -289,6 +319,7 @@ export class DataRoomsController {
     return this.dataRooms.moveFileToRoom(roomId, user.id, fileId, dto.destinationRoomId);
   }
 
+  // Delete a file.
   @Delete(ApiRoutes.DataRooms.file)
   deleteFile(
     @CurrentUser() user: AuthenticatedUser,

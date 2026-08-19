@@ -6,6 +6,7 @@ import { api } from '../lib/api';
 import { PdfViewerDialog } from './PdfViewerDialog';
 import { PageControls } from './PageControls';
 import { AppRoutes } from '../routes/app-routes';
+import { messageFrom, WebMessages } from '../lib/messages';
 
 function formatFileSize(sizeBytes?: number) {
   if (!sizeBytes) return '—';
@@ -43,9 +44,7 @@ export function SharedRoom() {
       : api.publicContents(accessKey, folderId, activeCursor);
     void request
       .then(setContents)
-      .catch((cause) =>
-        setError(cause instanceof Error ? cause.message : 'This shared access is unavailable.'),
-      )
+      .catch((cause) => setError(messageFrom(cause, WebMessages.sharing.unavailable)))
       .finally(() => setLoading(false));
   }, [accessKey, folderId, activeCursor, isPermissionedShare]);
   const nextPage = () => {
@@ -67,7 +66,7 @@ export function SharedRoom() {
         : await api.publicViewFile(accessKey, file.id);
       setViewerFile({ id: file.id, name: file.name, url });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Unable to open this document.');
+      setError(messageFrom(cause, WebMessages.sharing.openDocumentFailed));
     }
   };
   const downloadFile = async (file: { id: string; name: string }) => {
@@ -83,10 +82,10 @@ export function SharedRoom() {
       link.click();
       link.remove();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Unable to download this document.');
+      setError(messageFrom(cause, WebMessages.sharing.downloadDocumentFailed));
     }
   };
-  if (!accessKey) return <SharedError message="This shared access is invalid." />;
+  if (!accessKey) return <SharedError message={WebMessages.sharing.invalidAccess} />;
   if (error) return <SharedError message={error} />;
   if (!contents)
     return (

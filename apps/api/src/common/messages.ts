@@ -1,0 +1,53 @@
+/** User-facing API messages. Keep HTTP handlers free from duplicated text. */
+export const ApiMessages = {
+  authorization: {
+    invalidSession: 'Invalid or expired session',
+    maintenanceAccessDenied: 'Not authorized',
+    roomAccessDenied: 'You do not have access to this Data Room',
+  },
+  shares: {
+    publicLinkNotFound: 'Public link not found',
+    userAccessNotFound: 'User access not found',
+    ownerAlreadyHasAccess: 'The owner already has access to this Data Room',
+    sharedFileUnavailable: 'This shared file is unavailable',
+    sharedFolderUnavailable: 'This shared folder is unavailable',
+    folderOutsideSharedArea: 'This folder is outside the shared area',
+    invalidRoomTarget: 'A Data Room share cannot include a folder or file',
+    chooseFolderTarget: 'Choose one folder to share',
+    chooseFileTarget: 'Choose one file to share',
+    publicLinkUnavailable: 'This shared link is unavailable or has been revoked',
+    sharedAccessUnavailable: 'This shared access is unavailable or has been revoked',
+  },
+  resources: {
+    fileNotFound: 'File not found',
+    folderNotFound: 'Folder not found',
+    parentFolderNotFound: 'Parent folder not found',
+    destinationFolderNotFound: 'Destination folder not found',
+    folderNameConflict: 'A folder with this name already exists here',
+  },
+  uploads: {
+    unableToPrepare: 'Unable to prepare file upload',
+    sessionNotFound: 'Upload was not found. Start the upload again.',
+    sessionExpired: 'Upload link has expired. Start the upload again.',
+    verificationFailed: 'The uploaded file could not be verified. Choose a PDF and try again.',
+    unableToMove: 'Unable to move file in private storage',
+    storageNotConfigured: 'Supabase storage is not configured',
+    storedFileUnavailable: 'The stored file is no longer available',
+    storageUnavailable: 'Unable to access file storage',
+    unableToCreateBucket: 'Unable to create private file storage',
+    unableToRemoveFiles: 'Unable to remove file storage objects',
+    onlyPdf: 'Only PDF files can be uploaded',
+    exceedsSizeLimit: (name: string) => `${name} exceeds the 25 MB limit`,
+    duplicateFileNames: 'Too many files with the same name in this folder',
+    concurrentFileNameConflict:
+      'Unable to resolve a concurrent file name conflict. Please try again.',
+  },
+  validation: {
+    invalidPageCursor: 'Invalid page cursor',
+    invalidSearchCursor: 'Invalid search cursor',
+    invalidCursor: 'Invalid cursor',
+    invalidFileName: 'File name must contain 1–180 characters',
+    invalidFolderName: 'Folder name must contain 1–180 characters',
+    invalidRoomName: 'Data Room name must contain 1–120 characters',
+  },
+} as const;

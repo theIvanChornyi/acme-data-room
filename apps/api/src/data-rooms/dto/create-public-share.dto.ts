@@ -1,5 +1,6 @@
 import { ShareTargetType } from '@prisma/client';
 import { IsEnum, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import { ValidationLimits } from '../../common/helpers/validation';
 
 export class CreatePublicShareDto {
   @IsEnum(ShareTargetType)
@@ -15,6 +16,6 @@ export class CreatePublicShareDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(280)
+  @MaxLength(ValidationLimits.shareDescriptionLength)
   description?: string;
 }

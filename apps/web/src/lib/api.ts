@@ -10,6 +10,7 @@ import type {
 import { ShareTargetType } from '@acme/contracts';
 import { supabase } from './supabase';
 import { ApiRoutes } from './api-routes';
+import { WebMessages } from './messages';
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3000/api';
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -34,7 +35,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(error.message ?? 'Something went wrong. Please try again.');
+    throw new Error(error.message ?? WebMessages.api.requestFailed);
   }
   return response.json() as Promise<T>;
 }
@@ -43,7 +44,7 @@ async function publicRequest<T>(path: string): Promise<T> {
   const response = await fetch(`${API_URL}${path}`);
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(error.message ?? 'This shared link is unavailable.');
+    throw new Error(error.message ?? WebMessages.api.sharedLinkUnavailable);
   }
   return response.json() as Promise<T>;
 }
@@ -77,8 +78,7 @@ function uploadToSignedUrl(
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) onProgress(event.loaded, event.total);
     };
-    xhr.onerror = () =>
-      reject(new Error('Upload interrupted. Check your connection and try again.'));
+    xhr.onerror = () => reject(new Error(WebMessages.api.uploadInterrupted));
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         onProgress(file.size, file.size);
@@ -87,9 +87,7 @@ function uploadToSignedUrl(
       }
       const response = JSON.parse(xhr.responseText || '{}') as { message?: string; error?: string };
       reject(
-        new Error(
-          response.message ?? response.error ?? 'Unable to upload the file to private storage.',
-        ),
+        new Error(response.message ?? response.error ?? WebMessages.api.unableToUploadToStorage),
       );
     };
     xhr.send(file);
@@ -177,7 +175,7 @@ export const api = {
   ) => {
     const header = new TextDecoder().decode(await file.slice(0, 4).arrayBuffer());
     if (!file.name.toLowerCase().endsWith('.pdf') || header !== '%PDF')
-      throw new Error('Choose a valid PDF file.');
+      throw new Error(WebMessages.api.invalidPdf);
     const upload = await request<{ uploadId: string; signedUrl: string }>(
       ApiRoutes.DataRooms.uploadUrl(roomId),
       {

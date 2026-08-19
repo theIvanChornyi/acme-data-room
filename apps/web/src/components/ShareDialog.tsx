@@ -4,6 +4,7 @@ import { Check, Copy, Link2, LoaderCircle, Plus, Trash2, UserPlus, X } from 'luc
 import { api } from '../lib/api';
 import type { PublicShareTarget } from '../lib/api';
 import { AppRoutes } from '../routes/app-routes';
+import { messageFrom, WebMessages } from '../lib/messages';
 
 export function ShareDialog({
   roomId,
@@ -52,9 +53,7 @@ export function ShareDialog({
         setShares(publicShares);
         setUserShares(people);
       })
-      .catch((cause) =>
-        setError(cause instanceof Error ? cause.message : 'Unable to load sharing settings.'),
-      )
+      .catch((cause) => setError(messageFrom(cause, WebMessages.sharing.loadSettingsFailed)))
       .finally(() => setLoading(false));
   }, [open, roomId, stableTarget]);
 
@@ -79,7 +78,7 @@ export function ShareDialog({
       setShares((current) => [share, ...current]);
       setDescription('');
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Unable to create a public link.');
+      setError(messageFrom(cause, WebMessages.sharing.createLinkFailed));
     } finally {
       setCreating(false);
     }
@@ -94,7 +93,7 @@ export function ShareDialog({
       );
       setEmail('');
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Unable to grant access.');
+      setError(messageFrom(cause, WebMessages.sharing.grantAccessFailed));
     } finally {
       setGranting(false);
     }
@@ -107,7 +106,7 @@ export function ShareDialog({
       setCopiedId(share.id);
       window.setTimeout(() => setCopiedId(null), 1800);
     } catch {
-      setError('Unable to copy the link. Select it manually and copy it.');
+      setError(WebMessages.sharing.copyLinkFailed);
     }
   };
   const revoke = async (shareId: string) => {
@@ -116,7 +115,7 @@ export function ShareDialog({
       await api.revokePublicShare(roomId, shareId);
       setShares((current) => current.filter((share) => share.id !== shareId));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Unable to revoke this link.');
+      setError(messageFrom(cause, WebMessages.sharing.revokeLinkFailed));
     }
   };
   const revokeUser = async (shareId: string) => {
@@ -125,7 +124,7 @@ export function ShareDialog({
       await api.revokeUserShare(roomId, shareId);
       setUserShares((current) => current.filter((share) => share.id !== shareId));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Unable to revoke this access.');
+      setError(messageFrom(cause, WebMessages.sharing.revokeAccessFailed));
     }
   };
 

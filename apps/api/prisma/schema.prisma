@@ -3,27 +3,31 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
 
+/// Resource scope granted by a share.
 enum ShareTargetType {
   DATA_ROOM
   FOLDER
   FILE
 }
 
+/// How a share is accessed.
 enum ShareAccessType {
   PUBLIC_LINK
   USER
 }
 
+/// Permissions available through a share.
 enum ShareRole {
   VIEWER
   EDITOR
 }
 
+/// Local profile mirrored from Supabase Auth.
 model User {
   id        String   @id // Matches auth.users.id from Supabase
   email     String   @unique
@@ -32,43 +36,48 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  dataRooms DataRoom[]
-  shares    Share[]    @relation("SharedWithUser")
+  /// Rooms owned by this user.
+  dataRooms      DataRoom[]
+  shares         Share[]         @relation("SharedWithUser")
   uploadSessions UploadSession[]
 }
 
+/// Workspace that owns folders, files, and shares.
 model DataRoom {
-  id        String   @id @default(uuid())
-  name      String
+  id          String   @id @default(uuid())
+  name        String
   description String?
-  ownerId   String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  /// Supabase user who owns the workspace.
+  ownerId     String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  owner   User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  folders Folder[]
-  files   File[]
-  shares  Share[]
+  owner          User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  folders        Folder[]
+  files          File[]
+  shares         Share[]
   uploadSessions UploadSession[]
 
   @@index([ownerId, updatedAt])
 }
 
+/// Hierarchical container within a Data Room.
 model Folder {
   id         String   @id @default(uuid())
   dataRoomId String
   parentId   String?
   name       String
-  path       String   // Materialized path: /root-id/.../folder-id/
+  /// Materialized path used for subtree queries.
+  path       String
   depth      Int      @default(0)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  dataRoom DataRoom @relation(fields: [dataRoomId], references: [id], onDelete: Cascade)
-  parent   Folder?   @relation("FolderTree", fields: [parentId], references: [id], onDelete: Cascade)
-  children Folder[]  @relation("FolderTree")
-  files    File[]
-  shares   Share[]
+  dataRoom       DataRoom        @relation(fields: [dataRoomId], references: [id], onDelete: Cascade)
+  parent         Folder?         @relation("FolderTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children       Folder[]        @relation("FolderTree")
+  files          File[]
+  shares         Share[]
   uploadSessions UploadSession[]
 
   @@unique([dataRoomId, parentId, name])
@@ -77,11 +86,13 @@ model Folder {
   @@index([dataRoomId, path])
 }
 
+/// Metadata for a private file in Supabase Storage.
 model File {
   id          String   @id @default(uuid())
   dataRoomId  String
   folderId    String?
   name        String
+  /// Unique object key in the private storage bucket.
   storagePath String   @unique
   mimeType    String
   sizeBytes   BigInt
@@ -89,7 +100,7 @@ model File {
   updatedAt   DateTime @updatedAt
 
   dataRoom DataRoom @relation(fields: [dataRoomId], references: [id], onDelete: Cascade)
-  folder   Folder?   @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  folder   Folder?  @relation(fields: [folderId], references: [id], onDelete: SetNull)
   shares   Share[]
 
   @@unique([dataRoomId, folderId, name])
@@ -97,6 +108,7 @@ model File {
   @@index([dataRoomId, folderId, name, id])
 }
 
+/// Temporary record for a direct upload awaiting confirmation.
 model UploadSession {
   id          String   @id @default(uuid())
   dataRoomId  String
@@ -105,32 +117,37 @@ model UploadSession {
   name        String
   storagePath String   @unique
   sizeBytes   BigInt
+  /// Time after which the incomplete upload is cleaned up.
   expiresAt   DateTime
   createdAt   DateTime @default(now())
 
   dataRoom DataRoom @relation(fields: [dataRoomId], references: [id], onDelete: Cascade)
-  folder   Folder?   @relation(fields: [folderId], references: [id], onDelete: Cascade)
-  owner    User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  folder   Folder?  @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  owner    User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
 
   @@index([ownerId, expiresAt])
   @@index([dataRoomId, folderId])
 }
 
+/// Access grant for a room, folder, or file.
 model Share {
-  id          String          @id @default(uuid())
-  dataRoomId  String
-  folderId    String?
-  fileId      String?
-  targetType  ShareTargetType
-  accessType  ShareAccessType
-  recipientId String?
+  id             String          @id @default(uuid())
+  dataRoomId     String
+  folderId       String?
+  fileId         String?
+  targetType     ShareTargetType
+  accessType     ShareAccessType
+  /// Registered recipient for a user share.
+  recipientId    String?
   recipientEmail String?
-  token       String?         @unique
-  description String?
-  role        ShareRole       @default(VIEWER)
-  expiresAt   DateTime?
-  revokedAt   DateTime?
-  createdAt   DateTime        @default(now())
+  /// Secret token used by a public link.
+  token          String?         @unique
+  description    String?
+  role           ShareRole       @default(VIEWER)
+  expiresAt      DateTime?
+  /// Revocation time; null means the share is active.
+  revokedAt      DateTime?
+  createdAt      DateTime        @default(now())
 
   dataRoom  DataRoom @relation(fields: [dataRoomId], references: [id], onDelete: Cascade)
   folder    Folder?  @relation(fields: [folderId], references: [id], onDelete: Cascade)

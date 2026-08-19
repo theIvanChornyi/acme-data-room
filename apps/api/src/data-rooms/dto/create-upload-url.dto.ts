@@ -1,5 +1,15 @@
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min, MinLength } from 'class-validator';
+import {
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Max,
+  MaxLength,
+  Min,
+  MinLength,
+} from 'class-validator';
+import { ValidationLimits } from '../../common/helpers/validation';
 
 export class CreateUploadUrlDto {
   @IsOptional()
@@ -7,13 +17,13 @@ export class CreateUploadUrlDto {
   folderId?: string;
 
   @IsString()
-  @MinLength(1)
-  @MaxLength(180)
+  @MinLength(ValidationLimits.minimumNameLength)
+  @MaxLength(ValidationLimits.fileNameLength)
   name!: string;
 
   @Type(() => Number)
   @IsInt()
-  @Min(1)
-  @Max(25 * 1024 * 1024)
+  @Min(ValidationLimits.minUploadSizeBytes)
+  @Max(ValidationLimits.uploadSizeBytes)
   sizeBytes!: number;
 }

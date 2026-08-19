@@ -1,6 +1,8 @@
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
 import { createClient } from '@supabase/supabase-js';
 import { ShareAccessType } from '@prisma/client';
+import { ApiMessages } from '../common/messages';
+import { extractBearerToken } from '../common/helpers/authentication';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -11,7 +13,7 @@ export class SupabaseAuthGuard implements CanActivate {
     const request = context
       .switchToHttp()
       .getRequest<{ headers: { authorization?: string }; user?: unknown }>();
-    const token = request.headers.authorization?.replace(/^Bearer\s+/i, '');
+    const token = extractBearerToken(request.headers.authorization);
     if (!token || !process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
       throw new UnauthorizedException();
     }
@@ -44,7 +46,7 @@ export class SupabaseAuthGuard implements CanActivate {
       request.user = { id: data.user.id, email };
       return true;
     } catch {
-      throw new UnauthorizedException('Invalid or expired session');
+      throw new UnauthorizedException(ApiMessages.authorization.invalidSession);
     }
   }
 }

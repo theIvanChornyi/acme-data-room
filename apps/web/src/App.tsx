@@ -36,6 +36,7 @@ import { GlobalActivityBar } from './components/GlobalActivityBar';
 import { PageControls } from './components/PageControls';
 import { AppRouter } from './routes/AppRouter';
 import { AppRoutes } from './routes/app-routes';
+import { messageFrom, WebMessages } from './lib/messages';
 
 function Login() {
   const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
@@ -55,7 +56,7 @@ function Login() {
   };
 
   const signInWithGoogle = async () => {
-    if (!supabase) return setError('Add Supabase credentials to apps/web/.env before signing in.');
+    if (!supabase) return setError(WebMessages.auth.missingConfiguration);
     setError('');
     const { error: authError } = await supabase.auth.signInWithOAuth({
       provider: 'google',
@@ -66,11 +67,12 @@ function Login() {
 
   const submitEmailPassword = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!supabase) return setError('Add Supabase credentials to apps/web/.env before signing in.');
+    if (!supabase) return setError(WebMessages.auth.missingConfiguration);
     const normalizedEmail = email.trim().toLowerCase();
-    if (!normalizedEmail) return setError('Enter your email address.');
-    if (password.length < 8) return setError('Use a password with at least 8 characters.');
-    if (mode === 'sign-up' && password !== confirmation) return setError('Passwords do not match.');
+    if (!normalizedEmail) return setError(WebMessages.auth.emailRequired);
+    if (password.length < 8) return setError(WebMessages.auth.passwordTooShort);
+    if (mode === 'sign-up' && password !== confirmation)
+      return setError(WebMessages.auth.passwordsDoNotMatch);
 
     setSubmitting(true);
     setError('');
@@ -83,7 +85,7 @@ function Login() {
           options: { emailRedirectTo: window.location.origin },
         });
         if (authError) throw authError;
-        if (!data.session) setNotice('Check your email to confirm your account, then sign in.');
+        if (!data.session) setNotice(WebMessages.auth.confirmEmail);
       } else {
         const { error: authError } = await supabase.auth.signInWithPassword({
           email: normalizedEmail,
@@ -92,9 +94,7 @@ function Login() {
         if (authError) throw authError;
       }
     } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : 'Unable to authenticate. Please try again.',
-      );
+      setError(messageFrom(cause, WebMessages.auth.failed));
     } finally {
       setSubmitting(false);
     }
@@ -220,9 +220,7 @@ function Dashboard() {
         setRooms(ownedRooms);
         setSharedItems(shared);
       })
-      .catch((cause) =>
-        setError(cause instanceof Error ? cause.message : 'Unable to load your workspace.'),
-      )
+      .catch((cause) => setError(messageFrom(cause, WebMessages.workspace.unavailable)))
       .finally(() => setLoading(false));
   }, []);
   const saveRoom = async (name: string, description: string) => {
@@ -534,7 +532,7 @@ function RoomPage() {
       );
       setViewerFile({ id: fileId, name: file?.name ?? 'PDF document', url });
     } catch (cause) {
-      setActionError(cause instanceof Error ? cause.message : 'Unable to open file.');
+      setActionError(messageFrom(cause, WebMessages.workspace.openFileFailed));
     }
   };
   const downloadFile = async (file: { id: string; name: string }) => {
@@ -547,7 +545,7 @@ function RoomPage() {
       link.click();
       link.remove();
     } catch (cause) {
-      setActionError(cause instanceof Error ? cause.message : 'Unable to download file.');
+      setActionError(messageFrom(cause, WebMessages.workspace.downloadFileFailed));
     }
   };
   const startAction = async (action: ItemAction, item: RoomItem) => {
@@ -563,7 +561,7 @@ function RoomPage() {
     } catch (cause) {
       setActiveItem(null);
       setActiveAction(null);
-      setActionError(cause instanceof Error ? cause.message : 'Unable to prepare this action.');
+      setActionError(messageFrom(cause, WebMessages.workspace.prepareActionFailed));
     }
   };
   const closeAction = () => {
@@ -631,7 +629,7 @@ function RoomPage() {
       await workspaceMutation.mutateAsync(() => api.moveFile(roomId, fileId, destinationId));
     } catch (cause) {
       queryClient.setQueryData(['room-contents', roomId, folderId, activeCursor], previous);
-      setActionError(cause instanceof Error ? cause.message : 'Unable to move file.');
+      setActionError(messageFrom(cause, WebMessages.workspace.moveFileFailed));
     } finally {
       refreshContents();
       refreshFolders();
@@ -659,9 +657,7 @@ function RoomPage() {
       );
     } catch (cause) {
       queryClient.setQueryData(['room-contents', roomId, folderId, activeCursor], previous);
-      setActionError(
-        cause instanceof Error ? cause.message : 'Unable to move file to this Data Room.',
-      );
+      setActionError(messageFrom(cause, WebMessages.workspace.moveFileToRoomFailed));
     } finally {
       refreshContents();
       refreshRooms();
@@ -703,8 +699,7 @@ function RoomPage() {
     const accepted = files
       .slice(0, 10)
       .filter((file) => file.name.toLowerCase().endsWith('.pdf') && file.size <= 25 * 1024 * 1024);
-    if (!accepted.length)
-      return setActionError('Drop PDF files only; each file must be 25 MB or smaller.');
+    if (!accepted.length) return setActionError(WebMessages.workspace.invalidFiles);
     const uploadFolderId = folderId;
     const batch = accepted.map((file) => ({
       id: crypto.randomUUID(),
@@ -743,7 +738,7 @@ function RoomPage() {
                 ? {
                     ...item,
                     status: 'error',
-                    error: cause instanceof Error ? cause.message : 'Unable to upload this file.',
+                    error: messageFrom(cause, WebMessages.uploads.uploadFailed),
                   }
                 : item,
             ),
