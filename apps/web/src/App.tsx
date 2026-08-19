@@ -432,7 +432,6 @@ function RoomPage() {
     queryKey: ['room-contents', roomId, folderId, activeCursor],
     queryFn: () => api.contents(roomId!, folderId, activeCursor),
     enabled: Boolean(roomId),
-    placeholderData: keepPreviousData,
   });
   const searchFilesQuery = useQuery({
     queryKey: ['file-search', roomId, searchTerm, activeSearchCursor],
@@ -443,7 +442,6 @@ function RoomPage() {
     queryKey: ['folder-children', roomId, null],
     queryFn: () => api.folders(roomId!),
     enabled: Boolean(roomId),
-    placeholderData: keepPreviousData,
   });
   const folderOptionsQuery = useQuery({
     queryKey: ['folder-options', roomId],
@@ -778,6 +776,7 @@ function RoomPage() {
         <FolderTree
           rooms={rooms}
           rootFolders={rootFolders}
+          loadingRootFolders={rootFoldersQuery.isPending}
           activeRoomId={roomId}
           activeFolderId={folderId}
           expandedFolderIds={new Set(contents?.breadcrumbs.map((crumb) => crumb.id))}
@@ -785,7 +784,7 @@ function RoomPage() {
           onSelectRoom={(destinationRoomId) => {
             setPageCursors([undefined]);
             setPageIndex(0);
-            startTransition(() => setFolderId(undefined));
+            setFolderId(undefined);
             navigate(`/rooms/${destinationRoomId}`);
           }}
           onSelectFolder={selectFolder}
@@ -877,7 +876,8 @@ function RoomPage() {
               <p className="rounded-lg border border-dashed bg-slate-50 p-5 text-sm text-slate-500">
                 Enter at least 3 characters to search file names.
               </p>
-            ) : searchIsActive && (searchTerm !== searchInput.trim() || searchFilesQuery.isPending) ? (
+            ) : searchIsActive &&
+              (searchTerm !== searchInput.trim() || searchFilesQuery.isPending) ? (
               <RoomContentsSkeleton />
             ) : searchIsActive ? (
               searchResults?.items.length ? (
