@@ -17,7 +17,20 @@ export class DataRoomsService {
 
   async create(ownerId: string, email: string, dto: CreateDataRoomDto) {
     await this.prisma.user.upsert({ where: { id: ownerId }, update: { email }, create: { id: ownerId, email } });
-    return this.prisma.dataRoom.create({ data: { ...dto, ownerId } });
+    return this.prisma.dataRoom.create({ data: { name: this.cleanRoomName(dto.name), description: dto.description?.trim() || null, ownerId } });
+  }
+
+  async renameRoom(roomId: string, ownerId: string, dto: CreateDataRoomDto) {
+    await this.assertOwner(roomId, ownerId);
+    return this.prisma.dataRoom.update({ where: { id: roomId }, data: { name: this.cleanRoomName(dto.name), description: dto.description?.trim() || null } });
+  }
+
+  async deleteRoom(roomId: string, ownerId: string) {
+    await this.assertOwner(roomId, ownerId);
+    const files = await this.prisma.file.findMany({ where: { dataRoomId: roomId }, select: { storagePath: true } });
+    await this.removeStorageObjects(files.map((file) => file.storagePath));
+    await this.prisma.dataRoom.delete({ where: { id: roomId } });
+    return { deleted: { files: files.length } };
   }
 
   async contents(roomId: string, ownerId: string, folderId?: string) {
@@ -42,11 +55,56 @@ export class DataRoomsService {
     const id = crypto.randomUUID();
     const path = `${parent?.path ?? '/'}${id}/`;
     try {
-      return await this.prisma.folder.create({ data: { id, name: dto.name.trim(), dataRoomId: roomId, parentId: parent?.id, depth: (parent?.depth ?? -1) + 1, path } });
+      const folder = await this.prisma.folder.create({ data: { id, name: this.cleanFolderName(dto.name), dataRoomId: roomId, parentId: parent?.id, depth: (parent?.depth ?? -1) + 1, path } });
+      await this.touchRoom(roomId);
+      return folder;
     } catch (error: unknown) {
       if (this.isUniqueError(error)) throw new ConflictException('A folder with this name already exists here');
       throw error;
     }
+  }
+
+  async listFolders(roomId: string, ownerId: string) {
+    await this.assertOwner(roomId, ownerId);
+    return this.prisma.folder.findMany({ where: { dataRoomId: roomId }, select: { id: true, name: true, parentId: true, depth: true, path: true }, orderBy: { path: 'asc' } });
+  }
+
+  async renameFolder(roomId: string, ownerId: string, folderId: string, name: string) {
+    await this.assertOwner(roomId, ownerId);
+    const folder = await this.prisma.folder.findFirst({ where: { id: folderId, dataRoomId: roomId } });
+    if (!folder) throw new NotFoundException('Folder not found');
+    try {
+      const renamed = await this.prisma.folder.update({ where: { id: folder.id }, data: { name: this.cleanFolderName(name) } });
+      await this.touchRoom(roomId);
+      return renamed;
+    } catch (error) {
+      if (this.isUniqueError(error)) throw new ConflictException('A folder with this name already exists here');
+      throw error;
+    }
+  }
+
+  async folderDeletionSummary(roomId: string, ownerId: string, folderId: string) {
+    await this.assertOwner(roomId, ownerId);
+    const folder = await this.prisma.folder.findFirst({ where: { id: folderId, dataRoomId: roomId } });
+    if (!folder) throw new NotFoundException('Folder not found');
+    const folders = await this.prisma.folder.findMany({ where: { dataRoomId: roomId, path: { startsWith: folder.path } }, select: { id: true } });
+    const fileStats = await this.prisma.file.aggregate({ where: { dataRoomId: roomId, folderId: { in: folders.map((item) => item.id) } }, _count: { _all: true }, _sum: { sizeBytes: true } });
+    return { folders: folders.length, files: fileStats._count._all, sizeBytes: (fileStats._sum.sizeBytes ?? BigInt(0)).toString() };
+  }
+
+  async deleteFolder(roomId: string, ownerId: string, folderId: string) {
+    await this.assertOwner(roomId, ownerId);
+    const folder = await this.prisma.folder.findFirst({ where: { id: folderId, dataRoomId: roomId } });
+    if (!folder) throw new NotFoundException('Folder not found');
+    const folders = await this.prisma.folder.findMany({ where: { dataRoomId: roomId, path: { startsWith: folder.path } }, select: { id: true } });
+    const files = await this.prisma.file.findMany({ where: { dataRoomId: roomId, folderId: { in: folders.map((item) => item.id) } }, select: { id: true, storagePath: true } });
+    await this.removeStorageObjects(files.map((file) => file.storagePath));
+    await this.prisma.$transaction([
+      this.prisma.file.deleteMany({ where: { id: { in: files.map((file) => file.id) } } }),
+      this.prisma.folder.delete({ where: { id: folder.id } }),
+      this.prisma.dataRoom.update({ where: { id: roomId }, data: { updatedAt: new Date() } }),
+    ]);
+    return { deleted: { folders: folders.length, files: files.length } };
   }
 
   async uploadFiles(roomId: string, ownerId: string, folderId: string | undefined, files: UploadFile[]) {
@@ -101,6 +159,65 @@ export class DataRoomsService {
     return { url: data.signedUrl, expiresIn: 600 };
   }
 
+  async renameFile(roomId: string, ownerId: string, fileId: string, name: string) {
+    await this.assertOwner(roomId, ownerId);
+    const file = await this.prisma.file.findFirst({ where: { id: fileId, dataRoomId: roomId } });
+    if (!file) throw new NotFoundException('File not found');
+    const resolvedName = await this.nextAvailableName(roomId, file.folderId, this.cleanFileName(name), file.id);
+    const renamed = await this.prisma.file.update({ where: { id: file.id }, data: { name: resolvedName } });
+    await this.touchRoom(roomId);
+    return { ...renamed, sizeBytes: renamed.sizeBytes.toString() };
+  }
+
+  async moveFile(roomId: string, ownerId: string, fileId: string, destinationFolderId: string | null | undefined) {
+    await this.assertOwner(roomId, ownerId);
+    const file = await this.prisma.file.findFirst({ where: { id: fileId, dataRoomId: roomId } });
+    if (!file) throw new NotFoundException('File not found');
+    if (destinationFolderId) {
+      const folder = await this.prisma.folder.findFirst({ where: { id: destinationFolderId, dataRoomId: roomId } });
+      if (!folder) throw new NotFoundException('Destination folder not found');
+    }
+    const destination = destinationFolderId ?? null;
+    const name = await this.nextAvailableName(roomId, destination, file.name, file.id);
+    const moved = await this.prisma.file.update({ where: { id: file.id }, data: { folderId: destination, name } });
+    await this.touchRoom(roomId);
+    return { ...moved, sizeBytes: moved.sizeBytes.toString() };
+  }
+
+  async moveFileToRoom(roomId: string, ownerId: string, fileId: string, destinationRoomId: string) {
+    if (roomId === destinationRoomId) return this.moveFile(roomId, ownerId, fileId, null);
+    await this.assertOwner(roomId, ownerId);
+    await this.assertOwner(destinationRoomId, ownerId);
+    const file = await this.prisma.file.findFirst({ where: { id: fileId, dataRoomId: roomId } });
+    if (!file) throw new NotFoundException('File not found');
+    const name = await this.nextAvailableName(destinationRoomId, null, file.name);
+    const storagePath = `${destinationRoomId}/root/${crypto.randomUUID()}.pdf`;
+    const { error: storageError } = await this.storage().storage.from(this.storageBucket).move(file.storagePath, storagePath);
+    if (storageError) throw new InternalServerErrorException('Unable to move file in private storage');
+    try {
+      const moved = await this.prisma.$transaction(async (transaction) => {
+        const updated = await transaction.file.update({ where: { id: file.id }, data: { dataRoomId: destinationRoomId, folderId: null, name, storagePath } });
+        await transaction.share.updateMany({ where: { fileId: file.id }, data: { dataRoomId: destinationRoomId } });
+        await transaction.dataRoom.updateMany({ where: { id: { in: [roomId, destinationRoomId] } }, data: { updatedAt: new Date() } });
+        return updated;
+      });
+      return { ...moved, sizeBytes: moved.sizeBytes.toString() };
+    } catch (error) {
+      await this.storage().storage.from(this.storageBucket).move(storagePath, file.storagePath);
+      throw error;
+    }
+  }
+
+  async deleteFile(roomId: string, ownerId: string, fileId: string) {
+    await this.assertOwner(roomId, ownerId);
+    const file = await this.prisma.file.findFirst({ where: { id: fileId, dataRoomId: roomId } });
+    if (!file) throw new NotFoundException('File not found');
+    await this.removeStorageObjects([file.storagePath]);
+    await this.prisma.file.delete({ where: { id: file.id } });
+    await this.touchRoom(roomId);
+    return { deleted: true };
+  }
+
   private async assertOwner(roomId: string, ownerId: string) {
     const room = await this.prisma.dataRoom.findFirst({ where: { id: roomId, ownerId } });
     if (!room) throw new ForbiddenException('You do not have access to this Data Room');
@@ -131,6 +248,14 @@ export class DataRoomsService {
     this.bucketReady = true;
   }
 
+  private async removeStorageObjects(paths: string[]) {
+    const client = this.storage();
+    for (let index = 0; index < paths.length; index += 100) {
+      const { error } = await client.storage.from(this.storageBucket).remove(paths.slice(index, index + 100));
+      if (error) throw new InternalServerErrorException('Unable to remove file storage objects');
+    }
+  }
+
   private assertPdf(file: UploadFile) {
     const header = file.buffer.subarray(0, 4).toString('ascii');
     if (!file.originalname.toLowerCase().endsWith('.pdf') || header !== '%PDF') throw new BadRequestException(`${file.originalname} is not a valid PDF`);
@@ -143,13 +268,25 @@ export class DataRoomsService {
     return cleaned;
   }
 
-  private async nextAvailableName(roomId: string, folderId: string | undefined, original: string) {
+  private cleanFolderName(name: string) {
+    const cleaned = name.trim().replace(/[\\/]/g, '-').replace(/\s+/g, ' ');
+    if (!cleaned || cleaned.length > 180) throw new BadRequestException('Folder name must contain 1–180 characters');
+    return cleaned;
+  }
+
+  private cleanRoomName(name: string) {
+    const cleaned = name.trim().replace(/\s+/g, ' ');
+    if (!cleaned || cleaned.length > 120) throw new BadRequestException('Data Room name must contain 1–120 characters');
+    return cleaned;
+  }
+
+  private async nextAvailableName(roomId: string, folderId: string | null | undefined, original: string, excludedFileId?: string) {
     const extensionAt = original.lastIndexOf('.');
     const stem = extensionAt > 0 ? original.slice(0, extensionAt) : original;
     const extension = extensionAt > 0 ? original.slice(extensionAt) : '';
     for (let index = 0; index < 1000; index += 1) {
       const name = index ? `${stem} (${index})${extension}` : original;
-      const match = await this.prisma.file.findFirst({ where: { dataRoomId: roomId, folderId: folderId ?? null, name }, select: { id: true } });
+      const match = await this.prisma.file.findFirst({ where: { dataRoomId: roomId, folderId: folderId ?? null, name, ...(excludedFileId ? { id: { not: excludedFileId } } : {}) }, select: { id: true } });
       if (!match) return name;
     }
     throw new ConflictException('Too many files with the same name in this folder');
@@ -157,6 +294,10 @@ export class DataRoomsService {
 
   private isUniqueError(error: unknown): boolean {
     return typeof error === 'object' && error !== null && 'code' in error && (error as { code: string }).code === 'P2002';
+  }
+
+  private touchRoom(roomId: string) {
+    return this.prisma.dataRoom.update({ where: { id: roomId }, data: { updatedAt: new Date() } });
   }
 }
 

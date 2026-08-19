@@ -19,8 +19,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   rooms: () => request<DataRoomSummary[]>('/data-rooms'),
   createRoom: (name: string, description?: string) => request<DataRoomSummary>('/data-rooms', { method: 'POST', body: JSON.stringify({ name, description }) }),
+  renameRoom: (roomId: string, name: string, description?: string) => request<DataRoomSummary>(`/data-rooms/${roomId}`, { method: 'PATCH', body: JSON.stringify({ name, description }) }),
+  deleteRoom: (roomId: string) => request(`/data-rooms/${roomId}`, { method: 'DELETE' }),
   contents: (roomId: string, folderId?: string) => request<FolderContents>(`/data-rooms/${roomId}/contents${folderId ? `?folderId=${folderId}` : ''}`),
   createFolder: (roomId: string, name: string, parentId?: string) => request(`/data-rooms/${roomId}/folders`, { method: 'POST', body: JSON.stringify({ name, parentId }) }),
+  folders: (roomId: string) => request<Array<{ id: string; name: string; parentId: string | null; depth: number }>>(`/data-rooms/${roomId}/folders`),
+  renameFolder: (roomId: string, folderId: string, name: string) => request(`/data-rooms/${roomId}/folders/${folderId}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
+  folderDeletionSummary: (roomId: string, folderId: string) => request<{ folders: number; files: number; sizeBytes: string }>(`/data-rooms/${roomId}/folders/${folderId}/deletion-summary`),
+  deleteFolder: (roomId: string, folderId: string) => request(`/data-rooms/${roomId}/folders/${folderId}`, { method: 'DELETE' }),
   uploadFile: async (roomId: string, folderId: string | undefined, file: File, onProgress: (loaded: number, total: number) => void) => {
     const { data } = await supabase?.auth.getSession() ?? { data: { session: null } };
     if (!data.session?.access_token) throw new Error('Your session has expired. Please sign in again.');
@@ -42,4 +48,8 @@ export const api = {
     });
   },
   viewFile: (roomId: string, fileId: string) => request<{ url: string }>(`/data-rooms/${roomId}/files/${fileId}/view`),
+  renameFile: (roomId: string, fileId: string, name: string) => request(`/data-rooms/${roomId}/files/${fileId}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
+  moveFile: (roomId: string, fileId: string, folderId: string | null) => request(`/data-rooms/${roomId}/files/${fileId}/move`, { method: 'PATCH', body: JSON.stringify({ folderId }) }),
+  moveFileToRoom: (roomId: string, fileId: string, destinationRoomId: string) => request(`/data-rooms/${roomId}/files/${fileId}/move-to-room`, { method: 'PATCH', body: JSON.stringify({ destinationRoomId }) }),
+  deleteFile: (roomId: string, fileId: string) => request(`/data-rooms/${roomId}/files/${fileId}`, { method: 'DELETE' }),
 };

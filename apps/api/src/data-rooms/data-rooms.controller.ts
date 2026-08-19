@@ -1,10 +1,13 @@
-import { Body, Controller, Get, Param, Post, Query, UploadedFiles, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UploadedFiles, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { CurrentUser, AuthenticatedUser } from '../auth/current-user.decorator';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { CreateDataRoomDto } from './dto/create-data-room.dto';
 import { CreateFolderDto } from './dto/create-folder.dto';
 import { UploadFilesDto } from './dto/upload-files.dto';
+import { MoveFileDto } from './dto/move-file.dto';
+import { RenameItemDto } from './dto/rename-item.dto';
+import { MoveFileToRoomDto } from './dto/move-file-to-room.dto';
 import { DataRoomsService } from './data-rooms.service';
 
 @Controller('data-rooms')
@@ -16,11 +19,29 @@ export class DataRoomsController {
 
   @Post() create(@CurrentUser() user: AuthenticatedUser, @Body() dto: CreateDataRoomDto) { return this.dataRooms.create(user.id, user.email, dto); }
 
+  @Patch(':roomId')
+  renameRoom(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Body() dto: CreateDataRoomDto) { return this.dataRooms.renameRoom(roomId, user.id, dto); }
+
+  @Delete(':roomId')
+  deleteRoom(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string) { return this.dataRooms.deleteRoom(roomId, user.id); }
+
   @Get(':roomId/contents')
   contents(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Query('folderId') folderId?: string) { return this.dataRooms.contents(roomId, user.id, folderId); }
 
   @Post(':roomId/folders')
   createFolder(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Body() dto: CreateFolderDto) { return this.dataRooms.createFolder(roomId, user.id, dto); }
+
+  @Get(':roomId/folders')
+  listFolders(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string) { return this.dataRooms.listFolders(roomId, user.id); }
+
+  @Patch(':roomId/folders/:folderId')
+  renameFolder(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Param('folderId') folderId: string, @Body() dto: RenameItemDto) { return this.dataRooms.renameFolder(roomId, user.id, folderId, dto.name); }
+
+  @Get(':roomId/folders/:folderId/deletion-summary')
+  folderDeletionSummary(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Param('folderId') folderId: string) { return this.dataRooms.folderDeletionSummary(roomId, user.id, folderId); }
+
+  @Delete(':roomId/folders/:folderId')
+  deleteFolder(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Param('folderId') folderId: string) { return this.dataRooms.deleteFolder(roomId, user.id, folderId); }
 
   @Post(':roomId/files')
   @UseInterceptors(FilesInterceptor('files', 10, { limits: { fileSize: 25 * 1024 * 1024 } }))
@@ -32,6 +53,18 @@ export class DataRoomsController {
   viewFile(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Param('fileId') fileId: string) {
     return this.dataRooms.createViewUrl(roomId, user.id, fileId);
   }
+
+  @Patch(':roomId/files/:fileId')
+  renameFile(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Param('fileId') fileId: string, @Body() dto: RenameItemDto) { return this.dataRooms.renameFile(roomId, user.id, fileId, dto.name); }
+
+  @Patch(':roomId/files/:fileId/move')
+  moveFile(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Param('fileId') fileId: string, @Body() dto: MoveFileDto) { return this.dataRooms.moveFile(roomId, user.id, fileId, dto.folderId); }
+
+  @Patch(':roomId/files/:fileId/move-to-room')
+  moveFileToRoom(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Param('fileId') fileId: string, @Body() dto: MoveFileToRoomDto) { return this.dataRooms.moveFileToRoom(roomId, user.id, fileId, dto.destinationRoomId); }
+
+  @Delete(':roomId/files/:fileId')
+  deleteFile(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Param('fileId') fileId: string) { return this.dataRooms.deleteFile(roomId, user.id, fileId); }
 }
 
 interface UploadFile {

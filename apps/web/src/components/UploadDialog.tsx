@@ -8,8 +8,9 @@ interface UploadEntry {
   error?: string;
 }
 
-export function UploadDialog({ open, onClose, onUpload }: {
+export function UploadDialog({ open, initialFiles = [], onClose, onUpload }: {
   open: boolean;
+  initialFiles?: File[];
   onClose: () => void;
   onUpload: (file: File, reportProgress: (loaded: number, total: number) => void) => Promise<void>;
 }) {
@@ -19,7 +20,7 @@ export function UploadDialog({ open, onClose, onUpload }: {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => { if (open) { setEntries([]); setError(''); setUploading(false); } }, [open]);
+  useEffect(() => { if (open) { setEntries(initialFiles.map((file) => ({ file, progress: 0, status: 'queued' }))); setError(''); setUploading(false); } }, [open, initialFiles]);
   if (!open) return null;
 
   const add = (files: FileList | File[]) => {
