@@ -58,7 +58,6 @@ export const WebMessages = {
   dialogs: {
     nameRequired: 'Enter a name.',
     renameFailed: 'Unable to rename item.',
-    moveFailed: 'Unable to move file.',
     deleteFailed: 'Unable to delete item.',
     roomNameRequired: 'Enter a Data Room name.',
     saveRoomFailed: 'Unable to save Data Room.',

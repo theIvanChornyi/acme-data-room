@@ -25,6 +25,7 @@ export type PublicShareTarget =
   | { targetType: typeof ShareTargetType.FOLDER; folderId: string }
   | { targetType: typeof ShareTargetType.FILE; fileId: string };
 export type FileSearchResults = { items: RoomItem[]; nextCursor: string | null };
+export type UploadFilePhase = 'preparing' | 'uploading' | 'finalizing';
 const deletionPollingDelayMilliseconds = 200;
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -178,14 +179,15 @@ export const api = {
         hasChildren: boolean;
       }>
     >(`${ApiRoutes.DataRooms.folders(roomId)}${parentId ? `?parentId=${parentId}` : ''}`),
-  folderOptions: (roomId: string) =>
-    request<Array<{ id: string; name: string; parentId: string | null; depth: number }>>(
-      ApiRoutes.DataRooms.folderOptions(roomId),
-    ),
   renameFolder: (roomId: string, folderId: string, name: string) =>
     request(ApiRoutes.DataRooms.folder(roomId, folderId), {
       method: 'PATCH',
       body: JSON.stringify({ name }),
+    }),
+  moveFolder: (roomId: string, folderId: string, parentId: string | null) =>
+    request<RoomItem>(ApiRoutes.DataRooms.moveFolder(roomId, folderId), {
+      method: 'PATCH',
+      body: JSON.stringify({ parentId }),
     }),
   folderDeletionSummary: (roomId: string, folderId: string) =>
     request<FolderDeletionSummary>(ApiRoutes.DataRooms.folderDeletionSummary(roomId, folderId)),
@@ -210,7 +212,9 @@ export const api = {
     folderId: string | undefined,
     file: File,
     onProgress: (loaded: number, total: number) => void,
+    onStatus: (status: UploadFilePhase) => void,
   ) => {
+    onStatus('preparing');
     const header = new TextDecoder().decode(await file.slice(0, 4).arrayBuffer());
     if (!file.name.toLowerCase().endsWith('.pdf') || header !== '%PDF')
       throw new Error(WebMessages.api.invalidPdf);
@@ -222,7 +226,9 @@ export const api = {
       },
     );
     try {
+      onStatus('uploading');
       await uploadToSignedUrl(upload.signedUrl, file, onProgress);
+      onStatus('finalizing');
       return request<RoomItem>(ApiRoutes.DataRooms.completeUpload(roomId), {
         method: 'POST',
         body: JSON.stringify({ uploadId: upload.uploadId }),

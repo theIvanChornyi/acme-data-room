@@ -6,14 +6,13 @@ import {
   Download,
   FileText,
   Folder,
-  FolderInput,
   MoreHorizontal,
   Pencil,
   Share2,
   Trash2,
 } from 'lucide-react';
 
-export type ItemAction = 'rename' | 'move' | 'delete';
+export type ItemAction = 'rename' | 'delete';
 
 function formatFileSize(sizeBytes?: number) {
   if (!sizeBytes) return '—';
@@ -26,34 +25,34 @@ function formatFileSize(sizeBytes?: number) {
 export function RoomContents({
   items,
   currentFolderId,
-  draggedFileId,
+  draggedItem,
   onOpenFolder,
   onOpenFile,
   onAction,
   onShare,
   onDownload,
-  onDragFile,
-  onDropFile,
+  onDragItem,
+  onDropItem,
   selectedItemIds,
   onToggleItem,
   onToggleAll,
-  allowFileMoves = true,
+  allowItemMoves = true,
   allowCurrentFolderDrop = true,
 }: {
   items: RoomItem[];
   currentFolderId?: string;
-  draggedFileId: string | null;
+  draggedItem: RoomItem | null;
   onOpenFolder: (id: string) => void;
   onOpenFile: (id: string) => void;
   onAction: (action: ItemAction, item: RoomItem) => void;
   onShare: (item: RoomItem) => void;
   onDownload: (item: RoomItem) => void;
-  onDragFile: (fileId: string | null) => void;
-  onDropFile: (fileId: string, destinationId: string | null) => void;
+  onDragItem: (item: RoomItem | null) => void;
+  onDropItem: (item: RoomItem, destinationId: string | null) => void;
   selectedItemIds?: ReadonlySet<string>;
   onToggleItem?: (item: RoomItem) => void;
   onToggleAll?: (items: RoomItem[]) => void;
-  allowFileMoves?: boolean;
+  allowItemMoves?: boolean;
   allowCurrentFolderDrop?: boolean;
 }) {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
@@ -78,23 +77,23 @@ export function RoomContents({
     return () => document.removeEventListener('pointerdown', closeMenu);
   }, [openMenuId]);
   const startDrag = (event: DragEvent<HTMLDivElement>, item: RoomItem) => {
-    if (!allowFileMoves || item.kind !== 'file') return;
+    if (!allowItemMoves) return;
     event.dataTransfer.effectAllowed = 'move';
-    onDragFile(item.id);
+    onDragItem(item);
   };
   const dropOn = (event: DragEvent<HTMLElement>, destinationId: string | null) => {
     event.preventDefault();
     event.stopPropagation();
     setDropTargetId(null);
-    if (draggedFileId) onDropFile(draggedFileId, destinationId);
+    if (draggedItem) onDropItem(draggedItem, destinationId);
   };
   return (
     <div
       onDragOver={(event) => {
-        if (allowFileMoves && allowCurrentFolderDrop && draggedFileId) event.preventDefault();
+        if (allowItemMoves && allowCurrentFolderDrop && draggedItem) event.preventDefault();
       }}
       onDrop={(event) => {
-        if (allowFileMoves && allowCurrentFolderDrop && draggedFileId)
+        if (allowItemMoves && allowCurrentFolderDrop && draggedItem)
           dropOn(event, currentFolderId ?? null);
       }}
       className="overflow-visible rounded-xl border bg-white shadow-card"
@@ -118,12 +117,13 @@ export function RoomContents({
       {items.map((item) => (
         <div
           key={item.id}
-          draggable={allowFileMoves && item.kind === 'file'}
+          draggable={allowItemMoves}
+          title={allowItemMoves ? `Drag ${item.name} to move it` : undefined}
           onClick={() => openItem(item)}
           onDragStart={(event) => startDrag(event, item)}
-          onDragEnd={() => onDragFile(null)}
+          onDragEnd={() => onDragItem(null)}
           onDragOver={(event) => {
-            if (allowFileMoves && item.kind === 'folder' && draggedFileId) {
+            if (allowItemMoves && item.kind === 'folder' && draggedItem && draggedItem.id !== item.id) {
               event.preventDefault();
               event.stopPropagation();
               setDropTargetId(item.id);
@@ -131,9 +131,10 @@ export function RoomContents({
           }}
           onDragLeave={() => setDropTargetId(null)}
           onDrop={(event) => {
-            if (allowFileMoves && item.kind === 'folder' && draggedFileId) dropOn(event, item.id);
+            if (allowItemMoves && item.kind === 'folder' && draggedItem && draggedItem.id !== item.id)
+              dropOn(event, item.id);
           }}
-          className={`grid cursor-pointer ${gridColumns} items-center gap-4 border-b px-5 py-3.5 last:rounded-b-xl last:border-0 ${dropTargetId === item.id ? 'bg-blue-100 ring-1 ring-inset ring-blue-300' : selectedItemIds?.has(item.id) ? 'bg-blue-50' : 'hover:bg-blue-50/50'} ${allowFileMoves && item.kind === 'file' ? 'cursor-grab active:cursor-grabbing' : ''}`}
+          className={`grid cursor-pointer ${gridColumns} items-center gap-4 border-b px-5 py-3.5 last:rounded-b-xl last:border-0 ${dropTargetId === item.id ? 'bg-blue-100 ring-1 ring-inset ring-blue-300' : selectedItemIds?.has(item.id) ? 'bg-blue-50' : 'hover:bg-blue-50/50'} ${allowItemMoves ? 'cursor-grab active:cursor-grabbing' : ''}`}
         >
           {selectable && (
             <input
@@ -216,17 +217,6 @@ export function RoomContents({
                     >
                       <Download size={15} />
                       Download
-                    </button>
-                    <button
-                      title={`Move ${item.name}`}
-                      onClick={() => {
-                        setOpenMenuId(null);
-                        onAction('move', item);
-                      }}
-                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-slate-50"
-                    >
-                      <FolderInput size={15} />
-                      Move
                     </button>
                   </>
                 )}

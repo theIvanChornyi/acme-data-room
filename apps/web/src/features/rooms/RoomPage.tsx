@@ -19,7 +19,6 @@ import { DataRoomDialog } from '../../components/DataRoomDialog';
 import {
   BulkDeleteDialog,
   DeleteDialog,
-  MoveFileDialog,
   RenameDialog,
 } from '../../components/ItemDialogs';
 import { EmptyState } from '../../components/EmptyState';
@@ -77,7 +76,7 @@ export function RoomPage() {
   const [activeItem, setActiveItem] = useState<RoomItem | null>(null);
   const [activeAction, setActiveAction] = useState<ItemAction | null>(null);
   const [deletionSummary, setDeletionSummary] = useState<FolderDeletionSummary | null>(null);
-  const [draggedFileId, setDraggedFileId] = useState<string | null>(null);
+  const [draggedItem, setDraggedItem] = useState<RoomItem | null>(null);
   const [selectedItems, setSelectedItems] = useState<Record<string, RoomItem['kind']>>({});
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [bulkDeletionSummary, setBulkDeletionSummary] = useState<BulkDeletionSummary | null>(null);
@@ -116,12 +115,6 @@ export function RoomPage() {
     queryFn: () => api.folders(roomId!),
     enabled: Boolean(roomId),
   });
-  const folderOptionsQuery = useQuery({
-    queryKey: QueryKeys.folderOptions(queryRoomId),
-    queryFn: () => api.folderOptions(roomId!),
-    enabled: Boolean(roomId) && activeAction === 'move',
-    placeholderData: keepPreviousData,
-  });
   const roomsQuery = useQuery({
     queryKey: QueryKeys.rooms(),
     queryFn: api.rooms,
@@ -130,7 +123,6 @@ export function RoomPage() {
   const contents = contentsQuery.data ?? null;
   const searchResults = searchFilesQuery.data ?? null;
   const rootFolders = rootFoldersQuery.data ?? [];
-  const folderOptions = folderOptionsQuery.data ?? [];
   const rooms = roomsQuery.data ?? [];
   const queryError = searchIsActive
     ? !searchResults
@@ -164,7 +156,6 @@ export function RoomPage() {
   };
   const refreshFolders = () => {
     void queryClient.invalidateQueries({ queryKey: QueryKeys.folderChildrenByRoom(roomId) });
-    void queryClient.invalidateQueries({ queryKey: QueryKeys.folderOptions(roomId) });
   };
   const refreshRooms = () => void queryClient.invalidateQueries({ queryKey: QueryKeys.rooms() });
   const openPage = (nextPageIndex: number) => setPageIndex(nextPageIndex);
@@ -339,14 +330,6 @@ export function RoomPage() {
     }
     refreshContents();
   };
-  const moveFromDialog = async (destinationFolderId: string | null) => {
-    if (!activeItem || activeItem.kind !== 'file') return;
-    await workspaceMutation.mutateAsync(() =>
-      api.moveFile(roomId, activeItem.id, destinationFolderId),
-    );
-    refreshContents();
-    refreshFolders();
-  };
   const remove = async () => {
     if (!activeItem) return;
     const removed = activeItem;
@@ -402,26 +385,37 @@ export function RoomPage() {
       setDeletionNotice(WebMessages.workspace.deletionContinues);
     }
   };
-  const dropFile = async (fileId: string, destinationId: string | null) => {
-    setDraggedFileId(null);
-    if (destinationId === (folderId ?? null)) return;
+  const dropItem = async (item: RoomItem, destinationId: string | null) => {
+    setDraggedItem(null);
+    if (item.parentId === destinationId) return;
     const contentsKey = QueryKeys.roomContents(roomId, folderId, activeCursor);
     const previous = queryClient.getQueryData<FolderContents>(contentsKey);
     queryClient.setQueryData<FolderContents>(contentsKey, (current) =>
-      current ? { ...current, items: current.items.filter((item) => item.id !== fileId) } : current,
+      current
+        ? { ...current, items: current.items.filter((currentItem) => currentItem.id !== item.id) }
+        : current,
     );
     try {
-      await workspaceMutation.mutateAsync(() => api.moveFile(roomId, fileId, destinationId));
+      await workspaceMutation.mutateAsync(() =>
+        item.kind === 'folder'
+          ? api.moveFolder(roomId, item.id, destinationId)
+          : api.moveFile(roomId, item.id, destinationId),
+      );
     } catch (cause) {
       queryClient.setQueryData(contentsKey, previous);
-      setActionError(messageFrom(cause, WebMessages.workspace.moveFileFailed));
+      setActionError(
+        messageFrom(
+          cause,
+          item.kind === 'folder' ? 'Unable to move folder.' : WebMessages.workspace.moveFileFailed,
+        ),
+      );
     } finally {
       refreshContents();
       refreshFolders();
     }
   };
   const dropFileToRoom = async (fileId: string, destinationRoomId: string) => {
-    setDraggedFileId(null);
+    setDraggedItem(null);
     if (destinationRoomId === roomId && !folderId) return;
     const contentsKey = QueryKeys.roomContents(roomId, folderId, activeCursor);
     const previous = queryClient.getQueryData<FolderContents>(contentsKey);
@@ -488,23 +482,35 @@ export function RoomPage() {
       id: crypto.randomUUID(),
       name: file.name,
       progress: 0,
-      status: 'uploading' as const,
+      status: 'preparing' as const,
     }));
-    setSnackbarUploads(batch);
+    setSnackbarUploads((current) => [...current, ...batch]);
     void Promise.allSettled(
       batch.map(async (entry, index) => {
         try {
-          const uploaded = (await workspaceMutation.mutateAsync(() =>
-            api.uploadFile(roomId, uploadFolderId, accepted[index], (loaded, total) =>
-              setSnackbarUploads((current) =>
-                current.map((item) =>
-                  item.id === entry.id
-                    ? { ...item, progress: total ? Math.round((loaded / total) * 100) : 0 }
-                    : item,
+          const uploaded = (await workspaceMutation.mutateAsync(async () => {
+            return api.uploadFile(
+              roomId,
+              uploadFolderId,
+              accepted[index],
+              (loaded, total) =>
+                setSnackbarUploads((current) =>
+                  current.map((item) =>
+                    item.id === entry.id
+                      ? {
+                          ...item,
+                          progress: total ? Math.round((loaded / total) * 100) : 0,
+                          status: 'uploading',
+                        }
+                      : item,
+                  ),
                 ),
-              ),
-            ),
-          )) as RoomItem;
+              (status) =>
+                setSnackbarUploads((current) =>
+                  current.map((item) => (item.id === entry.id ? { ...item, status } : item)),
+                ),
+            );
+          })) as RoomItem;
           queryClient.setQueryData<FolderContents>(
             QueryKeys.roomContents(roomId, uploadFolderId, activeCursor),
             (current) => (current ? { ...current, items: [...current.items, uploaded] } : current),
@@ -568,7 +574,7 @@ export function RoomPage() {
           activeRoomId={roomId}
           activeFolderId={folderId}
           expandedFolderIds={new Set(contents?.breadcrumbs.map((crumb) => crumb.id))}
-          draggedFileId={draggedFileId}
+          draggedItem={draggedItem}
           onSelectRoom={(destinationRoomId) => {
             setPageCursors([undefined]);
             setPageIndex(0);
@@ -576,7 +582,7 @@ export function RoomPage() {
             navigate(AppRoutes.room(destinationRoomId));
           }}
           onSelectFolder={selectFolder}
-          onDropFile={dropFile}
+          onDropItem={dropItem}
           onDropFileToRoom={dropFileToRoom}
           onCreateFolder={openFolderDialog}
           onCreateDataRoom={() => setDataRoomDialog(undefined)}
@@ -709,7 +715,7 @@ export function RoomPage() {
                   </p>
                   <RoomContents
                     items={searchResults.items}
-                    draggedFileId={draggedFileId}
+                    draggedItem={draggedItem}
                     onOpenFolder={selectFolder}
                     onOpenFile={openFile}
                     onAction={startAction}
@@ -718,8 +724,8 @@ export function RoomPage() {
                     selectedItemIds={selectedItemIds}
                     onToggleItem={toggleSelectedItem}
                     onToggleAll={toggleAllSelectedItems}
-                    onDragFile={setDraggedFileId}
-                    onDropFile={dropFile}
+                    onDragItem={setDraggedItem}
+                    onDropItem={dropItem}
                     allowCurrentFolderDrop={false}
                   />
                   <PageControls
@@ -745,7 +751,7 @@ export function RoomPage() {
                 <RoomContents
                   items={contents.items}
                   currentFolderId={folderId}
-                  draggedFileId={draggedFileId}
+                  draggedItem={draggedItem}
                   onOpenFolder={selectFolder}
                   onOpenFile={openFile}
                   onAction={startAction}
@@ -754,8 +760,8 @@ export function RoomPage() {
                   selectedItemIds={selectedItemIds}
                   onToggleItem={toggleSelectedItem}
                   onToggleAll={toggleAllSelectedItems}
-                  onDragFile={setDraggedFileId}
-                  onDropFile={dropFile}
+                  onDragItem={setDraggedItem}
+                  onDropItem={dropItem}
                 />
                 <PageControls
                   pageIndex={pageIndex}
@@ -796,13 +802,6 @@ export function RoomPage() {
             item={activeAction === 'rename' ? activeItem : null}
             onClose={closeAction}
             onSubmit={rename}
-          />
-          <MoveFileDialog
-            item={activeAction === 'move' ? activeItem : null}
-            folders={folderOptions}
-            loading={folderOptionsQuery.isPending}
-            onClose={closeAction}
-            onSubmit={moveFromDialog}
           />
           <DeleteDialog
             item={activeAction === 'delete' ? activeItem : null}

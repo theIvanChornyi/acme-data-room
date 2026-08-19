@@ -10,5 +10,4 @@ export const QueryKeys = {
   folderChildren: (roomId: string, parentId: string | null) =>
     ['folder-children', roomId, parentId] as const,
   folderChildrenByRoom: (roomId: string) => ['folder-children', roomId] as const,
-  folderOptions: (roomId: string) => ['folder-options', roomId] as const,
 } as const;

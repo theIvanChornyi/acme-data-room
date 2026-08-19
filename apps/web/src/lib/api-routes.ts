@@ -21,7 +21,7 @@ export const ApiRoutes = {
     userShare: (roomId: string, shareId: string) => `${room(roomId)}/shares/users/${shareId}`,
     folders,
     folder: (roomId: string, folderId: string) => `${folders(roomId)}/${folderId}`,
-    folderOptions: (roomId: string) => `${room(roomId)}/folder-options`,
+    moveFolder: (roomId: string, folderId: string) => `${folders(roomId)}/${folderId}/move`,
     folderDeletionSummary: (roomId: string, folderId: string) =>
       `${folders(roomId)}/${folderId}/deletion-summary`,
     bulkDeletionSummary: (roomId: string) => `${room(roomId)}/bulk-deletion-summary`,

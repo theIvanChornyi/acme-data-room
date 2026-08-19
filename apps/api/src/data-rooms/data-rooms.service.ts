@@ -556,15 +556,6 @@ export class DataRoomsService {
     }));
   }
 
-  async listFolderOptions(roomId: string, ownerId: string) {
-    await this.assertOwner(roomId, ownerId);
-    return this.prisma.folder.findMany({
-      where: { dataRoomId: roomId, deletionRequestedAt: null },
-      select: { id: true, name: true, parentId: true, depth: true },
-      orderBy: { path: 'asc' },
-    });
-  }
-
   async renameFolder(roomId: string, ownerId: string, folderId: string, name: string) {
     await this.assertOwner(roomId, ownerId);
     const folder = await this.prisma.folder.findFirst({
@@ -579,6 +570,76 @@ export class DataRoomsService {
       });
       await this.touchRoom(roomId);
       return renamed;
+    } catch (error) {
+      if (isUniqueConstraintError(error))
+        throw new ConflictException(ApiMessages.resources.folderNameConflict);
+      throw error;
+    }
+  }
+
+  async moveFolder(
+    roomId: string,
+    ownerId: string,
+    folderId: string,
+    destinationParentId: string | null | undefined,
+  ) {
+    await this.assertOwner(roomId, ownerId);
+    const folder = await this.prisma.folder.findFirst({ where: { id: folderId, dataRoomId: roomId } });
+    if (!folder) throw new NotFoundException(ApiMessages.resources.folderNotFound);
+    await this.assertFolderWritable(folder);
+    const deletingDescendant = await this.prisma.folder.findFirst({
+      where: {
+        dataRoomId: roomId,
+        path: { startsWith: folder.path },
+        deletionRequestedAt: { not: null },
+      },
+      select: { id: true },
+    });
+    if (deletingDescendant) throw new ConflictException(ApiMessages.resources.deletionInProgress);
+
+    const destination = destinationParentId
+      ? await this.prisma.folder.findFirst({ where: { id: destinationParentId, dataRoomId: roomId } })
+      : null;
+    if (destinationParentId && !destination)
+      throw new NotFoundException(ApiMessages.resources.destinationFolderNotFound);
+    if (destination) {
+      await this.assertFolderWritable(destination);
+      if (destination.path.startsWith(folder.path))
+        throw new ConflictException(ApiMessages.resources.folderCannotBeMovedIntoDescendant);
+    }
+
+    const parentId = destination?.id ?? null;
+    if (folder.parentId === parentId) return folder;
+    const conflictingFolder = await this.prisma.folder.findFirst({
+      where: {
+        dataRoomId: roomId,
+        parentId,
+        name: folder.name,
+        id: { not: folder.id },
+      },
+      select: { id: true },
+    });
+    if (conflictingFolder) throw new ConflictException(ApiMessages.resources.folderNameConflict);
+
+    const nextPath = `${destination?.path ?? DataRoomStorage.rootPath}${folder.id}/`;
+    const depthDelta = (destination?.depth ?? -1) + 1 - folder.depth;
+    const updatedAt = new Date();
+    try {
+      const moved = await this.prisma.$transaction(async (transaction) => {
+        await transaction.$executeRaw`
+          UPDATE "Folder"
+          SET
+            "parentId" = CASE WHEN "id" = ${folder.id} THEN ${parentId} ELSE "parentId" END,
+            "path" = ${nextPath} || substring("path" FROM char_length(${folder.path}) + 1),
+            "depth" = "depth" + ${depthDelta},
+            "updatedAt" = ${updatedAt}
+          WHERE "dataRoomId" = ${roomId}
+            AND ("path" = ${folder.path} OR "path" LIKE ${`${folder.path}%`})
+        `;
+        return transaction.folder.findUnique({ where: { id: folder.id } });
+      });
+      await this.touchRoom(roomId);
+      return moved;
     } catch (error) {
       if (isUniqueConstraintError(error))
         throw new ConflictException(ApiMessages.resources.folderNameConflict);

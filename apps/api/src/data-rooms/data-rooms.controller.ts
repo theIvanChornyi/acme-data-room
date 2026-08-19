@@ -18,6 +18,7 @@ import { CreateFolderDto } from './dto/create-folder.dto';
 import { CreateUploadUrlDto } from './dto/create-upload-url.dto';
 import { CompleteUploadDto } from './dto/complete-upload.dto';
 import { MoveFileDto } from './dto/move-file.dto';
+import { MoveFolderDto } from './dto/move-folder.dto';
 import { RenameItemDto } from './dto/rename-item.dto';
 import { MoveFileToRoomDto } from './dto/move-file-to-room.dto';
 import { CreatePublicShareDto } from './dto/create-public-share.dto';
@@ -209,15 +210,6 @@ export class DataRoomsController {
     return this.dataRooms.listFolders(roomId, user.id, dto.parentId);
   }
 
-  // List folders for move destinations.
-  @Get(ApiRoutes.DataRooms.folderOptions)
-  listFolderOptions(
-    @CurrentUser() user: AuthenticatedUser,
-    @Param(ApiRouteParameters.roomId) roomId: string,
-  ) {
-    return this.dataRooms.listFolderOptions(roomId, user.id);
-  }
-
   // Rename a folder.
   @Patch(ApiRoutes.DataRooms.folder)
   renameFolder(
@@ -227,6 +219,17 @@ export class DataRoomsController {
     @Body() dto: RenameItemDto,
   ) {
     return this.dataRooms.renameFolder(roomId, user.id, folderId, dto.name);
+  }
+
+  // Move a folder and its complete subtree within the current Data Room.
+  @Patch(ApiRoutes.DataRooms.moveFolder)
+  moveFolder(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param(ApiRouteParameters.roomId) roomId: string,
+    @Param(ApiRouteParameters.folderId) folderId: string,
+    @Body() dto: MoveFolderDto,
+  ) {
+    return this.dataRooms.moveFolder(roomId, user.id, folderId, dto.parentId);
   }
 
   // Preview the impact of deleting a folder.

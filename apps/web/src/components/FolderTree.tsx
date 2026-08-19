@@ -1,6 +1,6 @@
 import { useEffect, useState, type DragEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import type { DataRoomSummary } from '@acme/contracts';
+import type { DataRoomSummary, RoomItem } from '@acme/contracts';
 import { ChevronDown, ChevronRight, Folder, FolderOpen, Plus, ShieldCheck } from 'lucide-react';
 import { api } from '../lib/api';
 import { QueryKeys } from '../lib/query-keys';
@@ -18,9 +18,9 @@ interface FolderNodeProps {
   folder: TreeFolder;
   activeFolderId?: string;
   expandedFolderIds: Set<string>;
-  draggedFileId: string | null;
+  draggedItem: RoomItem | null;
   onSelectFolder: (folderId?: string) => void;
-  onDropFile: (fileId: string, destinationId: string | null) => void;
+  onDropItem: (item: RoomItem, destinationId: string | null) => void;
   onCreateFolder: (parentId: string | null) => void;
 }
 
@@ -29,9 +29,9 @@ function FolderNode({
   folder,
   activeFolderId,
   expandedFolderIds,
-  draggedFileId,
+  draggedItem,
   onSelectFolder,
-  onDropFile,
+  onDropItem,
   onCreateFolder,
 }: FolderNodeProps) {
   const [expanded, setExpanded] = useState(false);
@@ -49,7 +49,7 @@ function FolderNode({
   const dropFolder = (event: DragEvent<HTMLElement>) => {
     event.preventDefault();
     setDropTarget(false);
-    if (draggedFileId) onDropFile(draggedFileId, folder.id);
+    if (draggedItem && draggedItem.id !== folder.id) onDropItem(draggedItem, folder.id);
   };
   const toggle = () => {
     if (folder.hasChildren) setExpanded((current) => !current);
@@ -58,7 +58,7 @@ function FolderNode({
     <div>
       <div
         onDragOver={(event) => {
-          if (draggedFileId) {
+          if (draggedItem && draggedItem.id !== folder.id) {
             event.preventDefault();
             setDropTarget(true);
           }
@@ -134,9 +134,9 @@ function FolderNode({
                 folder={child}
                 activeFolderId={activeFolderId}
                 expandedFolderIds={expandedFolderIds}
-                draggedFileId={draggedFileId}
+                draggedItem={draggedItem}
                 onSelectFolder={onSelectFolder}
-                onDropFile={onDropFile}
+                onDropItem={onDropItem}
                 onCreateFolder={onCreateFolder}
               />
             ))
@@ -153,10 +153,10 @@ export function FolderTree({
   activeRoomId,
   activeFolderId,
   expandedFolderIds,
-  draggedFileId,
+  draggedItem,
   onSelectRoom,
   onSelectFolder,
-  onDropFile,
+  onDropItem,
   onDropFileToRoom,
   onCreateFolder,
   onCreateDataRoom,
@@ -166,10 +166,10 @@ export function FolderTree({
   activeRoomId: string;
   activeFolderId?: string;
   expandedFolderIds: Set<string>;
-  draggedFileId: string | null;
+  draggedItem: RoomItem | null;
   onSelectRoom: (roomId: string) => void;
   onSelectFolder: (folderId?: string) => void;
-  onDropFile: (fileId: string, destinationId: string | null) => void;
+  onDropItem: (item: RoomItem, destinationId: string | null) => void;
   onDropFileToRoom: (fileId: string, destinationRoomId: string) => void;
   onCreateFolder: (parentId: string | null) => void;
   onCreateDataRoom: () => void;
@@ -178,7 +178,8 @@ export function FolderTree({
   const dropRoom = (event: DragEvent<HTMLElement>, roomId: string) => {
     event.preventDefault();
     setDropTarget(null);
-    if (draggedFileId) onDropFileToRoom(draggedFileId, roomId);
+    if (draggedItem?.kind === 'file') onDropFileToRoom(draggedItem.id, roomId);
+    if (draggedItem?.kind === 'folder' && roomId === activeRoomId) onDropItem(draggedItem, null);
   };
   return (
     <aside className="w-full shrink-0 border-b bg-white p-4 lg:min-h-0 lg:w-64 lg:overflow-y-auto lg:border-b-0 lg:border-r">
@@ -201,7 +202,7 @@ export function FolderTree({
             <div key={room.id}>
               <div
                 onDragOver={(event) => {
-                  if (draggedFileId) {
+                  if (draggedItem && (draggedItem.kind === 'file' || room.id === activeRoomId)) {
                     event.preventDefault();
                     setDropTarget(`room:${room.id}`);
                   }
@@ -245,9 +246,9 @@ export function FolderTree({
                       folder={folder}
                       activeFolderId={activeFolderId}
                       expandedFolderIds={expandedFolderIds}
-                      draggedFileId={draggedFileId}
+                      draggedItem={draggedItem}
                       onSelectFolder={onSelectFolder}
-                      onDropFile={onDropFile}
+                      onDropItem={onDropItem}
                       onCreateFolder={onCreateFolder}
                     />
                   ))}

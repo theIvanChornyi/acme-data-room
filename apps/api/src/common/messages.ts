@@ -25,6 +25,7 @@ export const ApiMessages = {
     parentFolderNotFound: 'Parent folder not found',
     destinationFolderNotFound: 'Destination folder not found',
     folderNameConflict: 'A folder with this name already exists here',
+    folderCannotBeMovedIntoDescendant: 'A folder cannot be moved into itself or one of its subfolders',
     deletionInProgress: 'This content is already being deleted',
     selectionRequired: 'Select at least one item',
     selectionItemNotFound: 'One or more selected items are no longer available',

@@ -42,7 +42,7 @@ export const ApiRoutes = {
     receivedShareDownloadFile: `shared-with-me/${shareId}/files/${fileId}/download`,
     folders: `${roomId}/folders`,
     folder: `${roomId}/folders/${folderId}`,
-    folderOptions: `${roomId}/folder-options`,
+    moveFolder: `${roomId}/folders/${folderId}/move`,
     folderDeletionSummary: `${roomId}/folders/${folderId}/deletion-summary`,
     bulkDeletionSummary: `${roomId}/bulk-deletion-summary`,
     bulkDelete: `${roomId}/bulk-delete`,
