@@ -1,0 +1,8 @@
+import { CheckCircle2, FileText, LoaderCircle, XCircle } from 'lucide-react';
+
+export interface UploadSnackbarItem { id: string; name: string; progress: number; status: 'uploading' | 'complete' | 'error'; error?: string; }
+
+export function UploadSnackbar({ items, onClose }: { items: UploadSnackbarItem[]; onClose: () => void }) {
+  if (!items.length) return null;
+  return <aside className="fixed bottom-5 right-5 z-30 w-[min(26rem,calc(100vw-2.5rem))] rounded-xl border bg-white p-4 shadow-xl"><div className="mb-3 flex items-center justify-between"><div><p className="text-sm font-semibold">Uploading files</p><p className="text-xs text-slate-500">You can continue working while this completes.</p></div><button onClick={onClose} className="text-sm text-slate-500 hover:text-ink">Hide</button></div><ul className="max-h-52 space-y-3 overflow-y-auto">{items.map((item) => <li key={item.id}><div className="flex items-center gap-2 text-sm"><FileText className="shrink-0 text-rose-500" size={17} /><span className="min-w-0 flex-1 truncate font-medium">{item.name}</span>{item.status === 'uploading' && <LoaderCircle className="animate-spin text-brand" size={16} />}{item.status === 'complete' && <CheckCircle2 className="text-emerald-600" size={16} />}{item.status === 'error' && <XCircle className="text-red-600" size={16} />}</div><div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-200"><div className={`h-full transition-all ${item.status === 'error' ? 'bg-red-500' : item.status === 'complete' ? 'bg-emerald-500' : 'bg-brand'}`} style={{ width: `${item.progress}%` }} /></div>{item.error && <p className="mt-1 text-xs text-red-600">{item.error}</p>}</li>)}</ul></aside>;
+}
