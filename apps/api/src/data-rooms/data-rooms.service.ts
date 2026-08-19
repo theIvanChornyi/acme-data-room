@@ -7,6 +7,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { createClient } from '@supabase/supabase-js';
+import { ShareAccessType, ShareRole, ShareTargetType } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateDataRoomDto } from './dto/create-data-room.dto';
@@ -99,7 +100,7 @@ export class DataRoomsService {
       where: {
         dataRoomId: roomId,
         ...this.shareTargetWhere(dto),
-        accessType: 'PUBLIC_LINK',
+        accessType: ShareAccessType.PUBLIC_LINK,
         revokedAt: null,
       },
       select: { id: true, token: true, description: true, createdAt: true },
@@ -114,12 +115,12 @@ export class DataRoomsService {
       data: {
         dataRoomId: roomId,
         targetType: dto.targetType,
-        accessType: 'PUBLIC_LINK',
-        role: 'VIEWER',
+        accessType: ShareAccessType.PUBLIC_LINK,
+        role: ShareRole.VIEWER,
         token: randomBytes(32).toString('base64url'),
         description: dto.description?.trim() || null,
-        folderId: dto.targetType === 'FOLDER' ? dto.folderId : null,
-        fileId: dto.targetType === 'FILE' ? dto.fileId : null,
+        folderId: dto.targetType === ShareTargetType.FOLDER ? dto.folderId : null,
+        fileId: dto.targetType === ShareTargetType.FILE ? dto.fileId : null,
       },
       select: { id: true, token: true, description: true, createdAt: true },
     });
@@ -128,7 +129,12 @@ export class DataRoomsService {
   async revokePublicShare(roomId: string, ownerId: string, shareId: string) {
     await this.assertOwner(roomId, ownerId);
     const share = await this.prisma.share.findFirst({
-      where: { id: shareId, dataRoomId: roomId, accessType: 'PUBLIC_LINK', revokedAt: null },
+      where: {
+        id: shareId,
+        dataRoomId: roomId,
+        accessType: ShareAccessType.PUBLIC_LINK,
+        revokedAt: null,
+      },
     });
     if (!share) throw new NotFoundException('Public link not found');
     await this.prisma.share.update({ where: { id: shareId }, data: { revokedAt: new Date() } });
@@ -142,7 +148,7 @@ export class DataRoomsService {
         where: {
           dataRoomId: roomId,
           ...this.shareTargetWhere(dto),
-          accessType: 'USER',
+          accessType: ShareAccessType.USER,
           revokedAt: null,
         },
         select: {
@@ -174,7 +180,7 @@ export class DataRoomsService {
     const where = {
       dataRoomId: roomId,
       ...this.shareTargetWhere(dto),
-      accessType: 'USER' as const,
+      accessType: ShareAccessType.USER,
       revokedAt: null,
       OR: recipient
         ? [{ recipientId: recipient.id }, { recipientEmail: email }]
@@ -189,12 +195,12 @@ export class DataRoomsService {
       data: {
         dataRoomId: roomId,
         targetType: dto.targetType,
-        accessType: 'USER',
-        role: 'VIEWER',
+        accessType: ShareAccessType.USER,
+        role: ShareRole.VIEWER,
         recipientId: recipient?.id,
         recipientEmail: email,
-        folderId: dto.targetType === 'FOLDER' ? dto.folderId : null,
-        fileId: dto.targetType === 'FILE' ? dto.fileId : null,
+        folderId: dto.targetType === ShareTargetType.FOLDER ? dto.folderId : null,
+        fileId: dto.targetType === ShareTargetType.FILE ? dto.fileId : null,
       },
       select: { id: true, createdAt: true },
     });
@@ -204,7 +210,12 @@ export class DataRoomsService {
   async revokeUserShare(roomId: string, ownerId: string, shareId: string) {
     await this.assertOwner(roomId, ownerId);
     const share = await this.prisma.share.findFirst({
-      where: { id: shareId, dataRoomId: roomId, accessType: 'USER', revokedAt: null },
+      where: {
+        id: shareId,
+        dataRoomId: roomId,
+        accessType: ShareAccessType.USER,
+        revokedAt: null,
+      },
     });
     if (!share) throw new NotFoundException('User access not found');
     await this.prisma.share.update({ where: { id: shareId }, data: { revokedAt: new Date() } });
@@ -215,7 +226,7 @@ export class DataRoomsService {
     const shares = await this.prisma.share.findMany({
       where: {
         recipientId,
-        accessType: 'USER',
+        accessType: ShareAccessType.USER,
         revokedAt: null,
         OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
       },
@@ -238,13 +249,13 @@ export class DataRoomsService {
 
   async publicContents(token: string, dto: ContentsQueryDto) {
     const share = await this.activePublicShare(token);
-    if (share.targetType === 'FILE') {
+    if (share.targetType === ShareTargetType.FILE) {
       if (!share.file) throw new NotFoundException('This shared file is unavailable');
       return {
         room: { name: share.dataRoom.name, description: share.dataRoom.description },
         shareDescription: share.description,
         scopeName: share.file.name,
-        targetType: 'FILE',
+        targetType: ShareTargetType.FILE,
         folder: null,
         breadcrumbs: [],
         items: [
@@ -258,8 +269,8 @@ export class DataRoomsService {
         nextCursor: null,
       };
     }
-    const sharedFolder = share.targetType === 'FOLDER' ? share.folder : null;
-    if (share.targetType === 'FOLDER' && !sharedFolder)
+    const sharedFolder = share.targetType === ShareTargetType.FOLDER ? share.folder : null;
+    if (share.targetType === ShareTargetType.FOLDER && !sharedFolder)
       throw new NotFoundException('This shared folder is unavailable');
     const requestedFolderId = dto.folderId ?? sharedFolder?.id;
     if (sharedFolder && requestedFolderId) {
@@ -294,13 +305,13 @@ export class DataRoomsService {
 
   async userShareContents(shareId: string, recipientId: string, dto: ContentsQueryDto) {
     const share = await this.activeUserShare(shareId, recipientId);
-    if (share.targetType === 'FILE') {
+    if (share.targetType === ShareTargetType.FILE) {
       if (!share.file) throw new NotFoundException('This shared file is unavailable');
       return {
         room: { name: share.dataRoom.name, description: share.dataRoom.description },
         shareDescription: null,
         scopeName: share.file.name,
-        targetType: 'FILE',
+        targetType: ShareTargetType.FILE,
         folder: null,
         breadcrumbs: [],
         items: [
@@ -314,8 +325,8 @@ export class DataRoomsService {
         nextCursor: null,
       };
     }
-    const sharedFolder = share.targetType === 'FOLDER' ? share.folder : null;
-    if (share.targetType === 'FOLDER' && !sharedFolder)
+    const sharedFolder = share.targetType === ShareTargetType.FOLDER ? share.folder : null;
+    if (share.targetType === ShareTargetType.FOLDER && !sharedFolder)
       throw new NotFoundException('This shared folder is unavailable');
     const requestedFolderId = dto.folderId ?? sharedFolder?.id;
     if (sharedFolder && requestedFolderId) {
@@ -350,10 +361,10 @@ export class DataRoomsService {
 
   async createPublicViewUrl(token: string, fileId: string) {
     const share = await this.activePublicShare(token);
-    if (share.targetType === 'FILE' && share.fileId !== fileId)
+    if (share.targetType === ShareTargetType.FILE && share.fileId !== fileId)
       throw new NotFoundException('File not found');
     const where =
-      share.targetType === 'FOLDER' && share.folder
+      share.targetType === ShareTargetType.FOLDER && share.folder
         ? {
             id: fileId,
             dataRoomId: share.dataRoomId,
@@ -367,10 +378,10 @@ export class DataRoomsService {
 
   async createPublicDownloadUrl(token: string, fileId: string) {
     const share = await this.activePublicShare(token);
-    if (share.targetType === 'FILE' && share.fileId !== fileId)
+    if (share.targetType === ShareTargetType.FILE && share.fileId !== fileId)
       throw new NotFoundException('File not found');
     const where =
-      share.targetType === 'FOLDER' && share.folder
+      share.targetType === ShareTargetType.FOLDER && share.folder
         ? {
             id: fileId,
             dataRoomId: share.dataRoomId,
@@ -830,20 +841,20 @@ export class DataRoomsService {
   }
 
   private shareTargetWhere(dto: CreatePublicShareDto) {
-    if (dto.targetType === 'DATA_ROOM')
-      return { targetType: 'DATA_ROOM' as const, folderId: null, fileId: null };
-    if (dto.targetType === 'FOLDER')
-      return { targetType: 'FOLDER' as const, folderId: dto.folderId ?? '', fileId: null };
-    return { targetType: 'FILE' as const, folderId: null, fileId: dto.fileId ?? '' };
+    if (dto.targetType === ShareTargetType.DATA_ROOM)
+      return { targetType: ShareTargetType.DATA_ROOM, folderId: null, fileId: null };
+    if (dto.targetType === ShareTargetType.FOLDER)
+      return { targetType: ShareTargetType.FOLDER, folderId: dto.folderId ?? '', fileId: null };
+    return { targetType: ShareTargetType.FILE, folderId: null, fileId: dto.fileId ?? '' };
   }
 
   private async assertShareTarget(roomId: string, dto: CreatePublicShareDto) {
-    if (dto.targetType === 'DATA_ROOM') {
+    if (dto.targetType === ShareTargetType.DATA_ROOM) {
       if (dto.folderId || dto.fileId)
         throw new BadRequestException('A Data Room share cannot include a folder or file');
       return;
     }
-    if (dto.targetType === 'FOLDER') {
+    if (dto.targetType === ShareTargetType.FOLDER) {
       if (!dto.folderId || dto.fileId) throw new BadRequestException('Choose one folder to share');
       const folder = await this.prisma.folder.findFirst({
         where: { id: dto.folderId, dataRoomId: roomId },
@@ -864,7 +875,7 @@ export class DataRoomsService {
     const share = await this.prisma.share.findFirst({
       where: {
         token,
-        accessType: 'PUBLIC_LINK',
+        accessType: ShareAccessType.PUBLIC_LINK,
         revokedAt: null,
         OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
       },
@@ -894,7 +905,7 @@ export class DataRoomsService {
       where: {
         id: shareId,
         recipientId,
-        accessType: 'USER',
+        accessType: ShareAccessType.USER,
         revokedAt: null,
         OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
       },
@@ -924,10 +935,10 @@ export class DataRoomsService {
     share: Awaited<ReturnType<DataRoomsService['activeUserShare']>>,
     fileId: string,
   ) {
-    if (share.targetType === 'FILE' && share.fileId !== fileId)
+    if (share.targetType === ShareTargetType.FILE && share.fileId !== fileId)
       throw new NotFoundException('File not found');
     const where =
-      share.targetType === 'FOLDER' && share.folder
+      share.targetType === ShareTargetType.FOLDER && share.folder
         ? {
             id: fileId,
             dataRoomId: share.dataRoomId,

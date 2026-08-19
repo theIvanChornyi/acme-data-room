@@ -1,5 +1,5 @@
 import { useEffect, useState, useTransition, type FormEvent, type ReactNode } from 'react';
-import { Link, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   LogOut,
@@ -12,7 +12,13 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import type { DataRoomSummary, FolderContents, ReceivedShare, RoomItem } from '@acme/contracts';
+import {
+  ShareTargetType,
+  type DataRoomSummary,
+  type FolderContents,
+  type ReceivedShare,
+  type RoomItem,
+} from '@acme/contracts';
 import { api, type PublicShareTarget } from './lib/api';
 import { supabase } from './lib/supabase';
 import { CreateFolderDialog } from './components/CreateFolderDialog';
@@ -28,6 +34,8 @@ import { SharedRoom } from './components/SharedRoom';
 import { PdfViewerDialog } from './components/PdfViewerDialog';
 import { GlobalActivityBar } from './components/GlobalActivityBar';
 import { PageControls } from './components/PageControls';
+import { AppRouter } from './routes/AppRouter';
+import { AppRoutes } from './routes/app-routes';
 
 function Login() {
   const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
@@ -260,7 +268,7 @@ function Dashboard() {
                     key={room.id}
                     className="relative min-w-0 rounded-xl border bg-white p-5 shadow-card transition hover:-translate-y-0.5 hover:border-blue-200"
                   >
-                    <Link to={`/rooms/${room.id}`} className="block min-w-0">
+                    <Link to={AppRoutes.room(room.id)} className="block min-w-0">
                       <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-brand">
                         <ShieldCheck size={20} />
                       </div>
@@ -337,7 +345,7 @@ function Dashboard() {
                 {sharedItems.map((share) => (
                   <Link
                     key={share.id}
-                    to={`/shared-with-me/${share.id}`}
+                    to={AppRoutes.receivedShare(share.id)}
                     className="min-w-0 rounded-xl border bg-white p-5 shadow-card transition hover:-translate-y-0.5 hover:border-blue-200"
                   >
                     <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-brand">
@@ -347,9 +355,9 @@ function Dashboard() {
                       {share.targetName}
                     </h3>
                     <p className="mt-1 break-words text-sm text-slate-500 line-clamp-2">
-                      {share.targetType === 'DATA_ROOM'
+                      {share.targetType === ShareTargetType.DATA_ROOM
                         ? 'Data Room'
-                        : share.targetType === 'FOLDER'
+                        : share.targetType === ShareTargetType.FOLDER
                           ? `Folder in ${share.roomName}`
                           : `PDF in ${share.roomName}`}
                     </p>
@@ -502,7 +510,7 @@ function RoomPage() {
     void queryClient.invalidateQueries({ queryKey: ['folder-options', roomId] });
   };
   const refreshRooms = () => void queryClient.invalidateQueries({ queryKey: ['rooms'] });
-  if (!roomId) return <Navigate to="/" replace />;
+  if (!roomId) return <Navigate to={AppRoutes.dashboard} replace />;
   const createFolder = async (name: string) => {
     const folder = (await workspaceMutation.mutateAsync(() =>
       api.createFolder(roomId, name, newFolderParentId ?? undefined),
@@ -667,8 +675,8 @@ function RoomPage() {
     setShareTarget({
       target:
         item.kind === 'folder'
-          ? { targetType: 'FOLDER', folderId: item.id }
-          : { targetType: 'FILE', fileId: item.id },
+          ? { targetType: ShareTargetType.FOLDER, folderId: item.id }
+          : { targetType: ShareTargetType.FILE, fileId: item.id },
       name: item.name,
     });
   const saveDataRoom = async (name: string, description: string) => {
@@ -688,7 +696,7 @@ function RoomPage() {
       created,
       ...(current ?? []),
     ]);
-    navigate(`/rooms/${created.id}`);
+    navigate(AppRoutes.room(created.id));
   };
   const startWorkspaceUpload = (files: File[]) => {
     setActionError('');
@@ -761,13 +769,13 @@ function RoomPage() {
   };
   const titleName = contents?.folder?.name ?? activeRoomName;
   const currentShareTarget: PublicShareTarget = contents?.folder
-    ? { targetType: 'FOLDER', folderId: contents.folder.id }
-    : { targetType: 'DATA_ROOM' };
+    ? { targetType: ShareTargetType.FOLDER, folderId: contents.folder.id }
+    : { targetType: ShareTargetType.DATA_ROOM };
   return (
     <Layout workspace>
       <button
         title="All Data Rooms"
-        onClick={() => navigate('/')}
+        onClick={() => navigate(AppRoutes.dashboard)}
         className="mb-5 shrink-0 text-sm text-slate-500 hover:text-ink"
       >
         ← All Data Rooms
@@ -784,7 +792,7 @@ function RoomPage() {
             setPageCursors([undefined]);
             setPageIndex(0);
             setFolderId(undefined);
-            navigate(`/rooms/${destinationRoomId}`);
+            navigate(AppRoutes.room(destinationRoomId));
           }}
           onSelectFolder={selectFolder}
           onDropFile={dropFile}
@@ -1041,7 +1049,7 @@ function Layout({ children, workspace = false }: { children: ReactNode; workspac
     <div className={workspace ? 'flex min-h-screen flex-col' : undefined}>
       <header className="shrink-0 border-b bg-white">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-5">
-          <Link to="/" className="flex items-center gap-2 font-semibold">
+          <Link to={AppRoutes.dashboard} className="flex items-center gap-2 font-semibold">
             <span className="rounded-lg bg-brand p-1.5 text-white">
               <ShieldCheck size={17} />
             </span>
@@ -1087,20 +1095,13 @@ export default function App() {
   return (
     <>
       <GlobalActivityBar />
-      <Routes>
-        <Route path="/shared/:token" element={<SharedRoom />} />
-        {supabase && authenticated ? (
-          <>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/rooms/:roomId" element={<RoomPage />} />
-            <Route path="/shared-with-me" element={<Navigate to="/" replace />} />
-            <Route path="/shared-with-me/:shareId" element={<SharedRoom />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </>
-        ) : (
-          <Route path="*" element={<Login />} />
-        )}
-      </Routes>
+      <AppRouter
+        authenticated={Boolean(supabase && authenticated)}
+        LoginScreen={Login}
+        DashboardScreen={Dashboard}
+        RoomScreen={RoomPage}
+        SharedRoomScreen={SharedRoom}
+      />
     </>
   );
 }

@@ -1,8 +1,9 @@
-import { IsIn, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import { ShareTargetType } from '@prisma/client';
+import { IsEnum, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 
 export class CreatePublicShareDto {
-  @IsIn(['DATA_ROOM', 'FOLDER', 'FILE'])
-  targetType!: 'DATA_ROOM' | 'FOLDER' | 'FILE';
+  @IsEnum(ShareTargetType)
+  targetType!: ShareTargetType;
 
   @IsOptional()
   @IsUUID()
