@@ -15,7 +15,7 @@ A full-stack virtual Data Room MVP for securely organizing, viewing, downloading
 
 ## Implemented functionality
 
-- Google sign-in and owner-isolated Data Rooms.
+- Google OAuth plus email/password sign-up and sign-in, with owner-isolated Data Rooms.
 - Create, rename, and delete Data Rooms.
 - Nested folders with breadcrumbs, collapsible tree sidebar, rename, deletion warning, and subtree deletion.
 - PDF uploads: picker or drag-and-drop, up to 10 files and 25 MB per file, individual upload progress, collision-safe names.
@@ -29,10 +29,11 @@ A full-stack virtual Data Room MVP for securely organizing, viewing, downloading
 ### 1. Configure Supabase
 
 1. Create a Supabase project.
-2. Enable **Google** in **Authentication → Providers** and configure its OAuth client.
-3. Add `http://localhost:5173` to **Authentication → URL Configuration → Redirect URLs**.
-4. Run [`supabase/migrations/0001_storage.sql`](supabase/migrations/0001_storage.sql) in the Supabase SQL editor. It creates the private `data-room-files` bucket and its policies.
-5. Copy [`.env.example`](.env.example) into both `apps/api/.env` and `apps/web/.env`.
+2. Enable **Email** in **Authentication → Providers**. We recommend keeping **Confirm email** enabled, and configure an SMTP provider before production.
+3. Enable **Google** in **Authentication → Providers** and configure its OAuth client if you want Google sign-in too.
+4. Add `http://localhost:5173` to **Authentication → URL Configuration → Redirect URLs**. Email confirmation links return to this URL.
+5. Run [`supabase/migrations/0001_storage.sql`](supabase/migrations/0001_storage.sql) in the Supabase SQL editor. It creates the private `data-room-files` bucket and its policies.
+6. Copy [`.env.example`](.env.example) into both `apps/api/.env` and `apps/web/.env`.
 
 Use these values:
 
@@ -54,7 +55,7 @@ pnpm dev
 
 Open `http://localhost:5173`. The Nest API listens at `http://localhost:3000/api`.
 
-For permissioned sharing, the recipient must first sign in to the app once with Google. This creates the minimal internal user record used to match a grant by email; no service-role key is ever sent to the browser.
+For permissioned sharing, the recipient must first sign in to the app once with Google or email/password. This creates the minimal internal user record used to match a grant by email; no service-role key is ever sent to the browser.
 
 ## Deployment
 
