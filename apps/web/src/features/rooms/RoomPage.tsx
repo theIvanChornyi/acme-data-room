@@ -5,6 +5,7 @@ import { Pencil, Search, Share2, X } from 'lucide-react';
 import {
   ShareTargetType,
   type DataRoomSummary,
+  type FolderDeletionSummary,
   type FolderContents,
   type RoomItem,
 } from '@acme/contracts';
@@ -24,6 +25,8 @@ import { api, type PublicShareTarget } from '../../lib/api';
 import { messageFrom, WebMessages } from '../../lib/messages';
 import { QueryKeys } from '../../lib/query-keys';
 import { AppRoutes } from '../../routes/app-routes';
+
+const MAX_FILES_PER_UPLOAD = 10;
 
 export function RoomPage() {
   const { roomId } = useParams();
@@ -51,11 +54,7 @@ export function RoomPage() {
   const [snackbarUploads, setSnackbarUploads] = useState<UploadSnackbarItem[]>([]);
   const [activeItem, setActiveItem] = useState<RoomItem | null>(null);
   const [activeAction, setActiveAction] = useState<ItemAction | null>(null);
-  const [deletionSummary, setDeletionSummary] = useState<{
-    folders: number;
-    files: number;
-    sizeBytes: string;
-  } | null>(null);
+  const [deletionSummary, setDeletionSummary] = useState<FolderDeletionSummary | null>(null);
   const [draggedFileId, setDraggedFileId] = useState<string | null>(null);
   const workspaceMutation = useMutation({ mutationFn: (work: () => Promise<unknown>) => work() });
 
@@ -327,10 +326,16 @@ export function RoomPage() {
   };
   const startWorkspaceUpload = (files: File[]) => {
     setActionError('');
-    const accepted = files
-      .slice(0, 10)
-      .filter((file) => file.name.toLowerCase().endsWith('.pdf') && file.size <= 25 * 1024 * 1024);
+    const eligible = files.filter(
+      (file) => file.name.toLowerCase().endsWith('.pdf') && file.size <= 25 * 1024 * 1024,
+    );
+    const accepted = eligible.slice(0, MAX_FILES_PER_UPLOAD);
     if (!accepted.length) return setActionError(WebMessages.workspace.invalidFiles);
+    const selectionMessage = WebMessages.workspace.uploadSelectionAdjusted(
+      files.length - eligible.length,
+      eligible.length - accepted.length,
+    );
+    if (selectionMessage) setActionError(selectionMessage);
     const uploadFolderId = folderId;
     const batch = accepted.map((file) => ({
       id: crypto.randomUUID(),

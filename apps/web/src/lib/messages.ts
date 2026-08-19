@@ -23,6 +23,18 @@ export const WebMessages = {
     moveFileFailed: 'Unable to move file.',
     moveFileToRoomFailed: 'Unable to move file to this Data Room.',
     invalidFiles: 'Drop PDF files only; each file must be 25 MB or smaller.',
+    uploadSelectionAdjusted: (invalidCount: number, overLimitCount: number) => {
+      const details = [];
+      if (invalidCount)
+        details.push(
+          `${invalidCount} file${invalidCount === 1 ? '' : 's'} must be a PDF no larger than 25 MB.`,
+        );
+      if (overLimitCount)
+        details.push(
+          `Only 10 files can be uploaded at once; ${overLimitCount} additional file${overLimitCount === 1 ? '' : 's'} were not added.`,
+        );
+      return details.join(' ');
+    },
   },
   sharing: {
     invalidAccess: 'This shared access is invalid.',

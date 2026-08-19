@@ -36,6 +36,16 @@ export interface FolderContents {
   nextCursor: string | null;
 }
 
+export interface FolderDeletionSummary {
+  folders: number;
+  files: number;
+  sizeBytes: string;
+  shares: {
+    publicLinks: number;
+    userAccessGrants: number;
+  };
+}
+
 export interface PublicShare {
   id: string;
   token: string;

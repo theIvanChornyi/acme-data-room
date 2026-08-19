@@ -537,15 +537,42 @@ export class DataRoomsService {
       where: { dataRoomId: roomId, path: { startsWith: folder.path } },
       select: { id: true },
     });
-    const fileStats = await this.prisma.file.aggregate({
-      where: { dataRoomId: roomId, folderId: { in: folders.map((item) => item.id) } },
-      _count: { _all: true },
-      _sum: { sizeBytes: true },
-    });
+    const folderIds = folders.map((item) => item.id);
+    const now = new Date();
+    const activeShareWhere = {
+      dataRoomId: roomId,
+      revokedAt: null,
+      AND: [
+        { OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
+        {
+          OR: [
+            { folderId: { in: folderIds } },
+            { file: { folderId: { in: folderIds } } },
+          ],
+        },
+      ],
+    };
+    const [fileStats, publicLinks, userAccessGrants] = await this.prisma.$transaction([
+      this.prisma.file.aggregate({
+        where: { dataRoomId: roomId, folderId: { in: folderIds } },
+        _count: { _all: true },
+        _sum: { sizeBytes: true },
+      }),
+      this.prisma.share.count({
+        where: { ...activeShareWhere, accessType: ShareAccessType.PUBLIC_LINK },
+      }),
+      this.prisma.share.count({
+        where: { ...activeShareWhere, accessType: ShareAccessType.USER },
+      }),
+    ]);
     return {
       folders: folders.length,
       files: fileStats._count._all,
       sizeBytes: (fileStats._sum.sizeBytes ?? BigInt(0)).toString(),
+      shares: {
+        publicLinks,
+        userAccessGrants,
+      },
     };
   }
 

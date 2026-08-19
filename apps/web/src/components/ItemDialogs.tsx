@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
-import type { RoomItem } from '@acme/contracts';
+import type { FolderDeletionSummary, RoomItem } from '@acme/contracts';
 import { messageFrom, WebMessages } from '../lib/messages';
 
 export function RenameDialog({
@@ -124,7 +124,7 @@ export function DeleteDialog({
   onSubmit,
 }: {
   item: RoomItem | null;
-  summary: { folders: number; files: number; sizeBytes: string } | null;
+  summary: FolderDeletionSummary | null;
   onClose: () => void;
   onSubmit: () => Promise<void>;
 }) {
@@ -146,9 +146,25 @@ export function DeleteDialog({
   const folderText = summary
     ? `This permanently removes ${summary.folders} folder${summary.folders === 1 ? '' : 's'} and ${summary.files} file${summary.files === 1 ? '' : 's'}.`
     : 'This permanently removes the selected document.';
+  const shareEffects = summary
+    ? [
+        summary.shares.publicLinks
+          ? `${summary.shares.publicLinks} public link${summary.shares.publicLinks === 1 ? '' : 's'}`
+          : null,
+        summary.shares.userAccessGrants
+          ? `${summary.shares.userAccessGrants} read-only access grant${summary.shares.userAccessGrants === 1 ? '' : 's'}`
+          : null,
+      ].filter((effect): effect is string => Boolean(effect))
+    : [];
   return (
     <Dialog title={`Delete ${item.kind}?`}>
-      <p className="text-sm leading-6 text-slate-600">{folderText} This cannot be undone.</p>
+      <p className="text-sm leading-6 text-slate-600">
+        {folderText}{' '}
+        {shareEffects.length
+          ? `It also revokes ${shareEffects.join(' and ')}. `
+          : ''}
+        This cannot be undone.
+      </p>
       {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
       <div className="mt-6 flex justify-end gap-3">
         <button onClick={onClose} disabled={deleting} className="px-3 py-2 text-sm font-medium">

@@ -1,5 +1,6 @@
 import type {
   DataRoomSummary,
+  FolderDeletionSummary,
   FolderContents,
   PublicShare,
   PublicShareContents,
@@ -162,9 +163,7 @@ export const api = {
       body: JSON.stringify({ name }),
     }),
   folderDeletionSummary: (roomId: string, folderId: string) =>
-    request<{ folders: number; files: number; sizeBytes: string }>(
-      ApiRoutes.DataRooms.folderDeletionSummary(roomId, folderId),
-    ),
+    request<FolderDeletionSummary>(ApiRoutes.DataRooms.folderDeletionSummary(roomId, folderId)),
   deleteFolder: (roomId: string, folderId: string) =>
     request(ApiRoutes.DataRooms.folder(roomId, folderId), { method: 'DELETE' }),
   uploadFile: async (
