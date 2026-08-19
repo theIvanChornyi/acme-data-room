@@ -24,12 +24,15 @@ export const ApiRoutes = {
     folderOptions: (roomId: string) => `${room(roomId)}/folder-options`,
     folderDeletionSummary: (roomId: string, folderId: string) =>
       `${folders(roomId)}/${folderId}/deletion-summary`,
+    bulkDeletionSummary: (roomId: string) => `${room(roomId)}/bulk-deletion-summary`,
+    bulkDelete: (roomId: string) => `${room(roomId)}/bulk-delete`,
     uploadUrl: (roomId: string) => `${room(roomId)}/files/upload-url`,
     completeUpload: (roomId: string) => `${room(roomId)}/files/complete-upload`,
     upload: (roomId: string, uploadId: string) => `${room(roomId)}/files/uploads/${uploadId}`,
     file: roomFile,
     viewFile: (roomId: string, fileId: string) => `${roomFile(roomId, fileId)}/view`,
     downloadFile: (roomId: string, fileId: string) => `${roomFile(roomId, fileId)}/download`,
+    downloadArchive: (roomId: string) => `${room(roomId)}/downloads/archive`,
     moveFile: (roomId: string, fileId: string) => `${roomFile(roomId, fileId)}/move`,
     moveFileToRoom: (roomId: string, fileId: string) => `${roomFile(roomId, fileId)}/move-to-room`,
     processDeletionJob: (roomId: string, jobId: string) =>

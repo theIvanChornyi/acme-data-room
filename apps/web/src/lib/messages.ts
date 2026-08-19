@@ -19,6 +19,7 @@ export const WebMessages = {
     unavailable: 'Unable to load your workspace.',
     openFileFailed: 'Unable to open file.',
     downloadFileFailed: 'Unable to download file.',
+    downloadSelectionFailed: 'Unable to download the selected items.',
     prepareActionFailed: 'Unable to prepare this action.',
     moveFileFailed: 'Unable to move file.',
     moveFileToRoomFailed: 'Unable to move file to this Data Room.',

@@ -53,6 +53,27 @@ export interface DeletionJobProgress {
   completed: boolean;
 }
 
+/** IDs submitted by the workspace selection controls. */
+export interface BulkSelection {
+  folderIds: string[];
+  fileIds: string[];
+}
+
+export interface BulkDeletionSummary {
+  folders: number;
+  files: number;
+  sizeBytes: string;
+  shares: {
+    publicLinks: number;
+    userAccessGrants: number;
+  };
+}
+
+export interface BulkDeletionProgress {
+  deletedFiles: number;
+  jobs: DeletionJobProgress[];
+}
+
 export interface PublicShare {
   id: string;
   token: string;

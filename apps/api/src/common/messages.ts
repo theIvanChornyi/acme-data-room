@@ -19,12 +19,15 @@ export const ApiMessages = {
     sharedAccessUnavailable: 'This shared access is unavailable or has been revoked',
   },
   resources: {
+    roomNotFound: 'Data Room not found',
     fileNotFound: 'File not found',
     folderNotFound: 'Folder not found',
     parentFolderNotFound: 'Parent folder not found',
     destinationFolderNotFound: 'Destination folder not found',
     folderNameConflict: 'A folder with this name already exists here',
     deletionInProgress: 'This content is already being deleted',
+    selectionRequired: 'Select at least one item',
+    selectionItemNotFound: 'One or more selected items are no longer available',
   },
   uploads: {
     unableToPrepare: 'Unable to prepare file upload',

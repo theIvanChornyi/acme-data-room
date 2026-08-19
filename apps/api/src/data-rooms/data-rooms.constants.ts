@@ -12,6 +12,9 @@ export const DataRoomStorage = {
     leaseMilliseconds: 60 * 1000,
     maintenanceJobsPerRun: 5,
   },
+  archive: {
+    batchSize: 100,
+  },
   upload: {
     extension: FileValidation.extension,
     mimeType: FileValidation.mimeType,

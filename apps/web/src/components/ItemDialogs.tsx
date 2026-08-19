@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
-import type { FolderDeletionSummary, RoomItem } from '@acme/contracts';
+import type { BulkDeletionSummary, FolderDeletionSummary, RoomItem } from '@acme/contracts';
 import { messageFrom, WebMessages } from '../lib/messages';
 
 export function RenameDialog({
@@ -173,6 +173,67 @@ export function DeleteDialog({
         <button
           onClick={submit}
           disabled={deleting}
+          className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+        >
+          {deleting ? 'Deleting…' : 'Delete permanently'}
+        </button>
+      </div>
+    </Dialog>
+  );
+}
+
+export function BulkDeleteDialog({
+  count,
+  summary,
+  onClose,
+  onSubmit,
+}: {
+  count: number;
+  summary: BulkDeletionSummary | null;
+  onClose: () => void;
+  onSubmit: () => Promise<void>;
+}) {
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => setError(''), [count, summary]);
+  const submit = async () => {
+    setDeleting(true);
+    try {
+      await onSubmit();
+      onClose();
+    } catch (cause) {
+      setError(messageFrom(cause, WebMessages.dialogs.deleteFailed));
+    } finally {
+      setDeleting(false);
+    }
+  };
+  const shareEffects = summary
+    ? [
+        summary.shares.publicLinks
+          ? `${summary.shares.publicLinks} public link${summary.shares.publicLinks === 1 ? '' : 's'}`
+          : null,
+        summary.shares.userAccessGrants
+          ? `${summary.shares.userAccessGrants} read-only access grant${summary.shares.userAccessGrants === 1 ? '' : 's'}`
+          : null,
+      ].filter((effect): effect is string => Boolean(effect))
+    : [];
+  return (
+    <Dialog title={`Delete ${count} selected item${count === 1 ? '' : 's'}?`}>
+      <p className="text-sm leading-6 text-slate-600">
+        {summary
+          ? `This permanently removes ${summary.folders} folder${summary.folders === 1 ? '' : 's'} and ${summary.files} file${summary.files === 1 ? '' : 's'}. `
+          : 'Preparing the deletion summary… '}
+        {shareEffects.length ? `It also revokes ${shareEffects.join(' and ')}. ` : ''}
+        This cannot be undone.
+      </p>
+      {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+      <div className="mt-6 flex justify-end gap-3">
+        <button onClick={onClose} disabled={deleting} className="px-3 py-2 text-sm font-medium">
+          Cancel
+        </button>
+        <button
+          onClick={submit}
+          disabled={deleting || !summary}
           className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
         >
           {deleting ? 'Deleting…' : 'Delete permanently'}

@@ -1,8 +1,11 @@
 import { useEffect, useState, useTransition } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Pencil, Search, Share2, X } from 'lucide-react';
+import { Download, Pencil, Search, Share2, Trash2, X } from 'lucide-react';
 import {
+  type BulkDeletionSummary,
+  type BulkDeletionProgress,
+  type BulkSelection,
   ShareTargetType,
   type DataRoomSummary,
   type DeletionJobProgress,
@@ -13,7 +16,12 @@ import {
 import { AppLayout } from '../../components/AppLayout';
 import { CreateFolderDialog } from '../../components/CreateFolderDialog';
 import { DataRoomDialog } from '../../components/DataRoomDialog';
-import { DeleteDialog, MoveFileDialog, RenameDialog } from '../../components/ItemDialogs';
+import {
+  BulkDeleteDialog,
+  DeleteDialog,
+  MoveFileDialog,
+  RenameDialog,
+} from '../../components/ItemDialogs';
 import { EmptyState } from '../../components/EmptyState';
 import { FolderTree } from '../../components/FolderTree';
 import { PageControls } from '../../components/PageControls';
@@ -22,12 +30,24 @@ import { RoomContents, type ItemAction } from '../../components/RoomContents';
 import { ShareDialog } from '../../components/ShareDialog';
 import { UploadSnackbar, type UploadSnackbarItem } from '../../components/UploadSnackbar';
 import { WorkspaceDropzone } from '../../components/WorkspaceDropzone';
-import { api, processDeletionUntilComplete, type PublicShareTarget } from '../../lib/api';
+import {
+  api,
+  processDeletionJobsUntilComplete,
+  processDeletionUntilComplete,
+  type PublicShareTarget,
+} from '../../lib/api';
 import { messageFrom, WebMessages } from '../../lib/messages';
 import { QueryKeys } from '../../lib/query-keys';
 import { AppRoutes } from '../../routes/app-routes';
 
 const MAX_FILES_PER_UPLOAD = 10;
+
+type FileSystemSaveWindow = Window & {
+  showSaveFilePicker?: (options: {
+    suggestedName: string;
+    types: Array<{ description: string; accept: Record<string, string[]> }>;
+  }) => Promise<{ createWritable: () => Promise<FileSystemWritableFileStream> }>;
+};
 
 export function RoomPage() {
   const { roomId } = useParams();
@@ -58,12 +78,16 @@ export function RoomPage() {
   const [activeAction, setActiveAction] = useState<ItemAction | null>(null);
   const [deletionSummary, setDeletionSummary] = useState<FolderDeletionSummary | null>(null);
   const [draggedFileId, setDraggedFileId] = useState<string | null>(null);
+  const [selectedItems, setSelectedItems] = useState<Record<string, RoomItem['kind']>>({});
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkDeletionSummary, setBulkDeletionSummary] = useState<BulkDeletionSummary | null>(null);
   const workspaceMutation = useMutation({ mutationFn: (work: () => Promise<unknown>) => work() });
 
   useEffect(() => {
     setPageCursors([undefined]);
     setPageIndex(0);
   }, [roomId, folderId]);
+  useEffect(() => setSelectedItems({}), [roomId, folderId, searchTerm]);
   useEffect(() => {
     const timer = window.setTimeout(() => setSearchTerm(searchInput.trim()), 250);
     return () => window.clearTimeout(timer);
@@ -121,6 +145,17 @@ export function RoomPage() {
       : 'Unable to load this Data Room.'
     : '';
 
+  const selectedItemIds = new Set(Object.keys(selectedItems));
+  const selectedSelection: BulkSelection = {
+    folderIds: Object.entries(selectedItems)
+      .filter(([, kind]) => kind === 'folder')
+      .map(([id]) => id),
+    fileIds: Object.entries(selectedItems)
+      .filter(([, kind]) => kind === 'file')
+      .map(([id]) => id),
+  };
+  const selectedCount = selectedSelection.folderIds.length + selectedSelection.fileIds.length;
+
   if (!roomId) return <Navigate to={AppRoutes.dashboard} replace />;
 
   const refreshContents = () => {
@@ -153,6 +188,25 @@ export function RoomPage() {
     setPageCursors([undefined]);
     setPageIndex(0);
     startTransition(() => setFolderId(nextFolderId));
+  };
+  const toggleSelectedItem = (item: RoomItem) => {
+    setSelectedItems((current) => {
+      const next = { ...current };
+      if (next[item.id]) delete next[item.id];
+      else next[item.id] = item.kind;
+      return next;
+    });
+  };
+  const toggleAllSelectedItems = (items: RoomItem[]) => {
+    setSelectedItems((current) => {
+      const allSelected = items.length > 0 && items.every((item) => current[item.id]);
+      const next = { ...current };
+      items.forEach((item) => {
+        if (allSelected) delete next[item.id];
+        else next[item.id] = item.kind;
+      });
+      return next;
+    });
   };
   const createFolder = async (name: string) => {
     const folder = (await workspaceMutation.mutateAsync(() =>
@@ -192,6 +246,66 @@ export function RoomPage() {
       link.remove();
     } catch (cause) {
       setActionError(messageFrom(cause, WebMessages.workspace.downloadFileFailed));
+    }
+  };
+  const downloadSelected = async () => {
+    try {
+      const savePicker = (window as FileSystemSaveWindow).showSaveFilePicker;
+      const fileHandle = savePicker
+        ? await savePicker({
+            suggestedName: 'data-room-selection.zip',
+            types: [{ description: 'ZIP archive', accept: { 'application/zip': ['.zip'] } }],
+          })
+        : null;
+      const archive = await api.downloadArchive(roomId, selectedSelection);
+      if (fileHandle && archive.body) {
+        await archive.body.pipeTo(await fileHandle.createWritable());
+        return;
+      }
+      const url = URL.createObjectURL(await archive.blob());
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'data-room-selection.zip';
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+    } catch (cause) {
+      if (cause instanceof DOMException && cause.name === 'AbortError') return;
+      setActionError(messageFrom(cause, WebMessages.workspace.downloadSelectionFailed));
+    }
+  };
+  const openBulkDelete = async () => {
+    setBulkDeleteOpen(true);
+    setBulkDeletionSummary(null);
+    try {
+      setBulkDeletionSummary(await api.bulkDeletionSummary(roomId, selectedSelection));
+    } catch (cause) {
+      setBulkDeleteOpen(false);
+      setActionError(messageFrom(cause, WebMessages.workspace.prepareActionFailed));
+    }
+  };
+  const removeSelected = async () => {
+    const selection = selectedSelection;
+    const selected = new Set([...selection.folderIds, ...selection.fileIds]);
+    const contentsKey = QueryKeys.roomContents(roomId, folderId, activeCursor);
+    const previous = queryClient.getQueryData<FolderContents>(contentsKey);
+    queryClient.setQueryData<FolderContents>(contentsKey, (current) =>
+      current ? { ...current, items: current.items.filter((item) => !selected.has(item.id)) } : current,
+    );
+    setSelectedItems({});
+    try {
+      const result = (await workspaceMutation.mutateAsync(() =>
+        api.bulkDelete(roomId, selection),
+      )) as BulkDeletionProgress;
+      if (result.jobs.length) void continueDeletionJobs(result.jobs);
+      else setDeletionNotice(WebMessages.workspace.deletionCompleted);
+    } catch (cause) {
+      queryClient.setQueryData(contentsKey, previous);
+      throw cause;
+    } finally {
+      refreshContents();
+      refreshFolders();
     }
   };
   const startAction = async (action: ItemAction, item: RoomItem) => {
@@ -265,6 +379,22 @@ export function RoomPage() {
     if (job.completed) return;
     try {
       await processDeletionUntilComplete(roomId, job);
+      setDeletionNotice(WebMessages.workspace.deletionCompleted);
+      refreshContents();
+      refreshFolders();
+    } catch {
+      setDeletionNotice(WebMessages.workspace.deletionContinues);
+    }
+  };
+  const continueDeletionJobs = async (jobs: DeletionJobProgress[]) => {
+    setDeletionNotice(
+      jobs.every((job) => job.completed)
+        ? WebMessages.workspace.deletionCompleted
+        : WebMessages.workspace.deletionQueued,
+    );
+    if (jobs.every((job) => job.completed)) return;
+    try {
+      await processDeletionJobsUntilComplete(roomId, jobs);
       setDeletionNotice(WebMessages.workspace.deletionCompleted);
       refreshContents();
       refreshFolders();
@@ -520,6 +650,38 @@ export function RoomPage() {
               </button>
             )}
           </label>
+          {selectedCount > 0 && (
+            <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3">
+              <p className="text-sm font-medium text-brand">
+                {selectedCount} item{selectedCount === 1 ? '' : 's'} selected
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void downloadSelected()}
+                  className="inline-flex items-center gap-2 rounded-lg bg-brand px-3 py-2 text-sm font-medium text-white hover:bg-blue-800"
+                >
+                  <Download size={16} />
+                  Download selected
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void openBulkDelete()}
+                  className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
+                >
+                  <Trash2 size={16} />
+                  Delete selected
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedItems({})}
+                  className="rounded px-2 py-1 text-sm text-slate-600 hover:bg-white"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+          )}
           <WorkspaceDropzone
             onFiles={startWorkspaceUpload}
             showPrompt={!contents?.items.length && !searchIsActive}
@@ -553,6 +715,9 @@ export function RoomPage() {
                     onAction={startAction}
                     onShare={openItemShare}
                     onDownload={(item) => void downloadFile(item)}
+                    selectedItemIds={selectedItemIds}
+                    onToggleItem={toggleSelectedItem}
+                    onToggleAll={toggleAllSelectedItems}
                     onDragFile={setDraggedFileId}
                     onDropFile={dropFile}
                     allowCurrentFolderDrop={false}
@@ -586,6 +751,9 @@ export function RoomPage() {
                   onAction={startAction}
                   onShare={openItemShare}
                   onDownload={(item) => void downloadFile(item)}
+                  selectedItemIds={selectedItemIds}
+                  onToggleItem={toggleSelectedItem}
+                  onToggleAll={toggleAllSelectedItems}
                   onDragFile={setDraggedFileId}
                   onDropFile={dropFile}
                 />
@@ -642,6 +810,17 @@ export function RoomPage() {
             onClose={closeAction}
             onSubmit={remove}
           />
+          {bulkDeleteOpen && (
+            <BulkDeleteDialog
+              count={selectedCount}
+              summary={bulkDeletionSummary}
+              onClose={() => {
+                setBulkDeleteOpen(false);
+                setBulkDeletionSummary(null);
+              }}
+              onSubmit={removeSelected}
+            />
+          )}
         </section>
       </div>
       <UploadSnackbar items={snackbarUploads} onClose={() => setSnackbarUploads([])} />

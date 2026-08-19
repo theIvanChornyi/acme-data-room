@@ -7,8 +7,10 @@ import {
   Patch,
   Post,
   Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { CurrentUser, AuthenticatedUser } from '../auth/current-user.decorator';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { CreateDataRoomDto } from './dto/create-data-room.dto';
@@ -23,6 +25,7 @@ import { GrantUserShareDto } from './dto/grant-user-share.dto';
 import { ContentsQueryDto } from './dto/contents-query.dto';
 import { ListFoldersDto } from './dto/list-folders.dto';
 import { SearchFilesDto } from './dto/search-files.dto';
+import { BulkSelectionDto } from './dto/bulk-selection.dto';
 import { DataRoomsService } from './data-rooms.service';
 import { ApiRouteParameters, ApiRoutes } from '../routes/api-routes';
 
@@ -236,6 +239,26 @@ export class DataRoomsController {
     return this.dataRooms.folderDeletionSummary(roomId, user.id, folderId);
   }
 
+  // Preview all descendants and access grants affected by a bulk removal.
+  @Post(ApiRoutes.DataRooms.bulkDeletionSummary)
+  bulkDeletionSummary(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param(ApiRouteParameters.roomId) roomId: string,
+    @Body() dto: BulkSelectionDto,
+  ) {
+    return this.dataRooms.bulkDeletionSummary(roomId, user.id, dto);
+  }
+
+  // Queue folder subtrees for durable deletion and remove selected standalone files in bounded batches.
+  @Post(ApiRoutes.DataRooms.bulkDelete)
+  bulkDelete(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param(ApiRouteParameters.roomId) roomId: string,
+    @Body() dto: BulkSelectionDto,
+  ) {
+    return this.dataRooms.bulkDelete(roomId, user.id, dto);
+  }
+
   // Delete a folder subtree.
   @Delete(ApiRoutes.DataRooms.folder)
   deleteFolder(
@@ -294,6 +317,24 @@ export class DataRoomsController {
     @Param(ApiRouteParameters.fileId) fileId: string,
   ) {
     return this.dataRooms.createDownloadUrl(roomId, user.id, fileId);
+  }
+
+  // Stream a ZIP archive directly to the caller. Files never pass through browser memory first.
+  @Post(ApiRoutes.DataRooms.downloadArchive)
+  async downloadArchive(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param(ApiRouteParameters.roomId) roomId: string,
+    @Body() dto: BulkSelectionDto,
+    @Res() response: Response,
+  ) {
+    const download = await this.dataRooms.createArchiveDownload(roomId, user.id, dto);
+    response.status(200);
+    response.setHeader('Content-Type', 'application/zip');
+    response.setHeader('Content-Disposition', `attachment; filename="${download.fileName}"`);
+    response.setHeader('Cache-Control', 'no-store');
+    download.archive.on('error', (error) => response.destroy(error));
+    download.archive.pipe(response);
+    void download.start();
   }
 
   // Rename a file.

@@ -1,4 +1,7 @@
 import type {
+  BulkDeletionProgress,
+  BulkDeletionSummary,
+  BulkSelection,
   DataRoomSummary,
   DeletionJobProgress,
   FolderDeletionSummary,
@@ -41,6 +44,25 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(error.message ?? WebMessages.api.requestFailed);
   }
   return response.json() as Promise<T>;
+}
+
+async function requestStream(path: string, init: RequestInit) {
+  const { data } = (await supabase?.auth.getSession()) ?? { data: { session: null } };
+  const response = await fetch(`${API_URL}${path}`, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(data.session?.access_token
+        ? { Authorization: `Bearer ${data.session.access_token}` }
+        : {}),
+      ...init.headers,
+    },
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.message ?? WebMessages.api.requestFailed);
+  }
+  return response;
 }
 
 async function publicRequest<T>(path: string): Promise<T> {
@@ -167,6 +189,16 @@ export const api = {
     }),
   folderDeletionSummary: (roomId: string, folderId: string) =>
     request<FolderDeletionSummary>(ApiRoutes.DataRooms.folderDeletionSummary(roomId, folderId)),
+  bulkDeletionSummary: (roomId: string, selection: BulkSelection) =>
+    request<BulkDeletionSummary>(ApiRoutes.DataRooms.bulkDeletionSummary(roomId), {
+      method: 'POST',
+      body: JSON.stringify(selection),
+    }),
+  bulkDelete: (roomId: string, selection: BulkSelection) =>
+    request<BulkDeletionProgress>(ApiRoutes.DataRooms.bulkDelete(roomId), {
+      method: 'POST',
+      body: JSON.stringify(selection),
+    }),
   deleteFolder: (roomId: string, folderId: string) =>
     request<DeletionJobProgress>(ApiRoutes.DataRooms.folder(roomId, folderId), { method: 'DELETE' }),
   processDeletionJob: (roomId: string, jobId: string) =>
@@ -206,6 +238,11 @@ export const api = {
     request<{ url: string }>(ApiRoutes.DataRooms.viewFile(roomId, fileId)),
   downloadFile: (roomId: string, fileId: string) =>
     request<{ url: string }>(ApiRoutes.DataRooms.downloadFile(roomId, fileId)),
+  downloadArchive: (roomId: string, selection: BulkSelection) =>
+    requestStream(ApiRoutes.DataRooms.downloadArchive(roomId), {
+      method: 'POST',
+      body: JSON.stringify(selection),
+    }),
   renameFile: (roomId: string, fileId: string, name: string) =>
     request(ApiRoutes.DataRooms.file(roomId, fileId), {
       method: 'PATCH',
@@ -255,4 +292,28 @@ export async function processDeletionUntilComplete(
     onProgress?.(job);
   }
   return job;
+}
+
+/** Processes a few independent folder jobs at a time, while cron remains the recovery path. */
+export async function processDeletionJobsUntilComplete(
+  roomId: string,
+  initialJobs: DeletionJobProgress[],
+  onProgress?: (jobs: DeletionJobProgress[]) => void,
+) {
+  const jobs = [...initialJobs];
+  while (jobs.some((job) => !job.completed)) {
+    await new Promise<void>((resolve) => window.setTimeout(resolve, deletionPollingDelayMilliseconds));
+    const pendingIndexes = jobs
+      .map((job, index) => (!job.completed ? index : -1))
+      .filter((index) => index >= 0)
+      .slice(0, 3);
+    const updates = await Promise.all(
+      pendingIndexes.map(async (index) => ({ index, job: await api.processDeletionJob(roomId, jobs[index].id) })),
+    );
+    updates.forEach(({ index, job }) => {
+      jobs[index] = job;
+    });
+    onProgress?.([...jobs]);
+  }
+  return jobs;
 }

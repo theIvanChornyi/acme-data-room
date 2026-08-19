@@ -7,8 +7,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { createClient } from '@supabase/supabase-js';
+import archiver, { type Archiver } from 'archiver';
 import { DeletionTargetType, ShareAccessType, ShareRole, ShareTargetType } from '@prisma/client';
 import { randomBytes } from 'crypto';
+import { Readable } from 'node:stream';
+import { finished } from 'node:stream/promises';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateDataRoomDto } from './dto/create-data-room.dto';
 import { CreateFolderDto } from './dto/create-folder.dto';
@@ -17,6 +20,7 @@ import { GrantUserShareDto } from './dto/grant-user-share.dto';
 import { ContentsQueryDto } from './dto/contents-query.dto';
 import { CreateUploadUrlDto } from './dto/create-upload-url.dto';
 import { SearchFilesDto } from './dto/search-files.dto';
+import { BulkSelectionDto } from './dto/bulk-selection.dto';
 import { ApiMessages } from '../common/messages';
 import {
   clampPageSize,
@@ -37,6 +41,29 @@ import {
   type FileSearchCursor,
 } from '../common/helpers/cursor';
 import { DataRoomStorage } from './data-rooms.constants';
+
+type SelectedFolder = { id: string; dataRoomId: string; name: string; path: string };
+type SelectedFile = {
+  id: string;
+  dataRoomId: string;
+  folderId: string | null;
+  name: string;
+  storagePath: string;
+  sizeBytes: bigint;
+  folder: { path: string } | null;
+};
+
+type ResolvedBulkSelection = {
+  roomName: string;
+  folders: SelectedFolder[];
+  files: SelectedFile[];
+};
+
+export type ArchiveDownload = {
+  fileName: string;
+  archive: Archiver;
+  start: () => Promise<void>;
+};
 
 @Injectable()
 export class DataRoomsService {
@@ -614,14 +641,109 @@ export class DataRoomsService {
       where: { id: folderId, dataRoomId: roomId },
     });
     if (!folder) throw new NotFoundException(ApiMessages.resources.folderNotFound);
+    const job = await this.queueFolderDeletion(roomId, ownerId, folder);
+    return this.processDeletionJob(job.id);
+  }
+
+  async bulkDeletionSummary(roomId: string, ownerId: string, dto: BulkSelectionDto) {
+    const selection = await this.resolveBulkSelection(roomId, ownerId, dto);
+    const [directFiles, folderSummaries] = await Promise.all([
+      this.directFilesOutsideFolders(selection),
+      Promise.all(
+        selection.folders.map((folder) => this.folderDeletionSummary(roomId, ownerId, folder.id)),
+      ),
+    ]);
+    const directFileIds = directFiles.map((file) => file.id);
+    const [directStats, publicLinks, userAccessGrants] = await this.prisma.$transaction([
+      this.prisma.file.aggregate({
+        where: { id: { in: directFileIds } },
+        _count: { _all: true },
+        _sum: { sizeBytes: true },
+      }),
+      this.prisma.share.count({
+        where: {
+          dataRoomId: roomId,
+          fileId: { in: directFileIds },
+          accessType: ShareAccessType.PUBLIC_LINK,
+          revokedAt: null,
+        },
+      }),
+      this.prisma.share.count({
+        where: {
+          dataRoomId: roomId,
+          fileId: { in: directFileIds },
+          accessType: ShareAccessType.USER,
+          revokedAt: null,
+        },
+      }),
+    ]);
+    const folderTotals = folderSummaries.reduce(
+      (total, summary) => ({
+        folders: total.folders + summary.folders,
+        files: total.files + summary.files,
+        sizeBytes: total.sizeBytes + BigInt(summary.sizeBytes),
+        publicLinks: total.publicLinks + summary.shares.publicLinks,
+        userAccessGrants: total.userAccessGrants + summary.shares.userAccessGrants,
+      }),
+      { folders: 0, files: 0, sizeBytes: BigInt(0), publicLinks: 0, userAccessGrants: 0 },
+    );
+    return {
+      folders: folderTotals.folders,
+      files: folderTotals.files + directStats._count._all,
+      sizeBytes: (folderTotals.sizeBytes + (directStats._sum.sizeBytes ?? BigInt(0))).toString(),
+      shares: {
+        publicLinks: folderTotals.publicLinks + publicLinks,
+        userAccessGrants: folderTotals.userAccessGrants + userAccessGrants,
+      },
+    };
+  }
+
+  async bulkDelete(roomId: string, ownerId: string, dto: BulkSelectionDto) {
+    const selection = await this.resolveBulkSelection(roomId, ownerId, dto);
+    const directFiles = await this.directFilesOutsideFolders(selection);
+    await Promise.all(directFiles.map((file) => this.assertFileWritable(file)));
+    if (directFiles.length) {
+      await this.removeStorageObjects(directFiles.map((file) => file.storagePath));
+      await this.prisma.file.deleteMany({ where: { id: { in: directFiles.map((file) => file.id) } } });
+      await this.touchRoom(roomId);
+    }
+    const queuedJobs = [];
+    for (const folder of selection.folders)
+      queuedJobs.push(await this.queueFolderDeletion(roomId, ownerId, folder));
+    const jobs = [];
+    for (const job of queuedJobs.slice(0, DataRoomStorage.deletion.maintenanceJobsPerRun))
+      jobs.push(await this.processDeletionJob(job.id));
+    jobs.push(...queuedJobs.slice(jobs.length).map((job) => this.serializeDeletionJob(job)));
+    return { deletedFiles: directFiles.length, jobs };
+  }
+
+  async createArchiveDownload(
+    roomId: string,
+    ownerId: string,
+    dto: BulkSelectionDto,
+  ): Promise<ArchiveDownload> {
+    const selection = await this.resolveBulkSelection(roomId, ownerId, dto);
+    const archive = archiver('zip', { zlib: { level: 6 } });
+    return {
+      fileName: `${this.safeArchiveName(selection.roomName)}.zip`,
+      archive,
+      start: () => this.writeArchive(archive, selection),
+    };
+  }
+
+  private async queueFolderDeletion(
+    roomId: string,
+    ownerId: string,
+    folder: SelectedFolder | { id: string; path: string },
+  ) {
     const existing = await this.prisma.deletionJob.findFirst({
-      where: { folderId, completedAt: null },
+      where: { folderId: folder.id, completedAt: null },
       orderBy: { createdAt: 'desc' },
     });
-    if (existing) return this.serializeDeletionJob(existing);
+    if (existing) return existing;
 
     const requestedAt = new Date();
-    const job = await this.prisma.$transaction(async (transaction) => {
+    return this.prisma.$transaction(async (transaction) => {
       await transaction.folder.update({
         where: { id: folder.id },
         data: { deletionRequestedAt: requestedAt },
@@ -647,7 +769,163 @@ export class DataRoomsService {
         },
       });
     });
-    return this.processDeletionJob(job.id);
+  }
+
+  private async resolveBulkSelection(
+    roomId: string,
+    ownerId: string,
+    dto: BulkSelectionDto,
+  ): Promise<ResolvedBulkSelection> {
+    await this.assertOwner(roomId, ownerId);
+    const folderIds = [...new Set(dto.folderIds)];
+    const fileIds = [...new Set(dto.fileIds)];
+    if (!folderIds.length && !fileIds.length)
+      throw new BadRequestException(ApiMessages.resources.selectionRequired);
+    const [room, folders, files] = await this.prisma.$transaction([
+      this.prisma.dataRoom.findUnique({ where: { id: roomId }, select: { name: true } }),
+      this.prisma.folder.findMany({
+        where: { id: { in: folderIds }, dataRoomId: roomId },
+        select: { id: true, dataRoomId: true, name: true, path: true },
+      }),
+      this.prisma.file.findMany({
+        where: { id: { in: fileIds }, dataRoomId: roomId },
+        select: {
+          id: true,
+          dataRoomId: true,
+          folderId: true,
+          name: true,
+          storagePath: true,
+          sizeBytes: true,
+          folder: { select: { path: true } },
+        },
+      }),
+    ]);
+    if (!room) throw new NotFoundException(ApiMessages.resources.roomNotFound);
+    if (folders.length !== folderIds.length || files.length !== fileIds.length)
+      throw new NotFoundException(ApiMessages.resources.selectionItemNotFound);
+    await Promise.all(folders.map((folder) => this.assertFolderWritable({ dataRoomId: roomId, path: folder.path })));
+    const roots = folders.filter(
+      (folder) => !folders.some((possibleParent) => possibleParent.id !== folder.id && folder.path.startsWith(possibleParent.path)),
+    );
+    return { roomName: room.name, folders: roots, files };
+  }
+
+  private async directFilesOutsideFolders(selection: ResolvedBulkSelection) {
+    return selection.files.filter(
+      (file) =>
+        !file.folder || !selection.folders.some((folder) => file.folder?.path.startsWith(folder.path)),
+    );
+  }
+
+  private async writeArchive(archive: Archiver, selection: ResolvedBulkSelection) {
+    const usedPaths = new Set<string>();
+    const rootNames = this.uniqueArchiveRootNames(selection.folders);
+    try {
+      for (const file of await this.directFilesOutsideFolders(selection))
+        await this.appendArchiveFile(archive, file, this.uniqueArchivePath(file.name, usedPaths));
+      for (const folder of selection.folders)
+        await this.appendFolderArchive(archive, folder, rootNames.get(folder.id) ?? folder.name, usedPaths);
+      await archive.finalize();
+    } catch (error) {
+      archive.destroy(error instanceof Error ? error : new Error(ApiMessages.uploads.storageUnavailable));
+      throw error;
+    }
+  }
+
+  private async appendFolderArchive(
+    archive: Archiver,
+    root: SelectedFolder,
+    rootName: string,
+    usedPaths: Set<string>,
+  ) {
+    archive.append('', { name: `${rootName}/` });
+    let afterId: string | undefined;
+    do {
+      const files = await this.prisma.file.findMany({
+        where: {
+          dataRoomId: root.dataRoomId,
+          folder: { path: { startsWith: root.path } },
+          ...(afterId ? { id: { gt: afterId } } : {}),
+        },
+        select: {
+          id: true,
+          dataRoomId: true,
+          folderId: true,
+          name: true,
+          storagePath: true,
+          sizeBytes: true,
+          folder: { select: { path: true } },
+        },
+        orderBy: { id: 'asc' },
+        take: DataRoomStorage.archive.batchSize,
+      });
+      if (!files.length) break;
+      const folderNames = await this.folderNamesForPaths(files.flatMap((file) => this.pathIds(file.folder?.path)));
+      for (const file of files) {
+        const folderIds = this.pathIds(file.folder?.path);
+        const relativeFolderIds = folderIds.slice(this.pathIds(root.path).length);
+        const relativeFolders = relativeFolderIds.map((id) => folderNames.get(id)).filter(Boolean);
+        const path = [rootName, ...relativeFolders, file.name].join('/');
+        await this.appendArchiveFile(archive, file, this.uniqueArchivePath(path, usedPaths));
+      }
+      afterId = files.at(-1)?.id;
+    } while (afterId);
+  }
+
+  private async appendArchiveFile(
+    archive: Archiver,
+    file: SelectedFile,
+    archivePath: string,
+  ) {
+    const { data, error } = await this.storage()
+      .storage.from(this.storageBucket)
+      .createSignedUrl(file.storagePath, DataRoomStorage.signedUrlTtlSeconds);
+    if (error || !data) throw new InternalServerErrorException(ApiMessages.uploads.storageUnavailable);
+    const response = await fetch(data.signedUrl);
+    if (!response.ok || !response.body)
+      throw new InternalServerErrorException(ApiMessages.uploads.storedFileUnavailable);
+    const source = Readable.fromWeb(response.body as never);
+    archive.append(source, { name: archivePath, date: new Date() });
+    await finished(source);
+  }
+
+  private async folderNamesForPaths(ids: string[]) {
+    const uniqueIds = [...new Set(ids)];
+    if (!uniqueIds.length) return new Map<string, string>();
+    const folders = await this.prisma.folder.findMany({
+      where: { id: { in: uniqueIds } },
+      select: { id: true, name: true },
+    });
+    return new Map(folders.map((folder) => [folder.id, folder.name]));
+  }
+
+  private pathIds(path: string | undefined) {
+    return path?.split('/').filter(Boolean) ?? [];
+  }
+
+  private uniqueArchiveRootNames(folders: SelectedFolder[]) {
+    const names = new Set<string>();
+    return new Map(folders.map((folder) => [folder.id, this.uniqueArchivePath(folder.name, names)]));
+  }
+
+  private uniqueArchivePath(path: string, usedPaths: Set<string>) {
+    const normalized =
+      path.replaceAll(/[\\/:*?"<>|]/g, '_').replace(/^\.+$/, 'selection') || 'selection';
+    let candidate = normalized;
+    let count = 2;
+    while (usedPaths.has(candidate.toLocaleLowerCase())) {
+      const dot = normalized.lastIndexOf('.');
+      const base = dot > 0 ? normalized.slice(0, dot) : normalized;
+      const extension = dot > 0 ? normalized.slice(dot) : '';
+      candidate = `${base} (${count})${extension}`;
+      count += 1;
+    }
+    usedPaths.add(candidate.toLocaleLowerCase());
+    return candidate;
+  }
+
+  private safeArchiveName(name: string) {
+    return name.replaceAll(/[\\/:*?"<>|]/g, '_').trim() || 'data-room-selection';
   }
 
   async createUploadUrl(roomId: string, ownerId: string, dto: CreateUploadUrlDto) {

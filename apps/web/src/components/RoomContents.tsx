@@ -34,6 +34,9 @@ export function RoomContents({
   onDownload,
   onDragFile,
   onDropFile,
+  selectedItemIds,
+  onToggleItem,
+  onToggleAll,
   allowFileMoves = true,
   allowCurrentFolderDrop = true,
 }: {
@@ -47,6 +50,9 @@ export function RoomContents({
   onDownload: (item: RoomItem) => void;
   onDragFile: (fileId: string | null) => void;
   onDropFile: (fileId: string, destinationId: string | null) => void;
+  selectedItemIds?: ReadonlySet<string>;
+  onToggleItem?: (item: RoomItem) => void;
+  onToggleAll?: (items: RoomItem[]) => void;
   allowFileMoves?: boolean;
   allowCurrentFolderDrop?: boolean;
 }) {
@@ -57,6 +63,11 @@ export function RoomContents({
     if (item.kind === 'folder') onOpenFolder(item.id);
     else onOpenFile(item.id);
   };
+  const selectable = Boolean(selectedItemIds && onToggleItem && onToggleAll);
+  const allSelected = selectable && items.length > 0 && items.every((item) => selectedItemIds?.has(item.id));
+  const gridColumns = selectable
+    ? 'grid-cols-[2.5rem_minmax(0,1fr)_9rem_6rem_7rem_2.5rem]'
+    : 'grid-cols-[minmax(0,1fr)_9rem_6rem_7rem_2.5rem]';
   useEffect(() => {
     if (!openMenuId) return;
     const closeMenu = (event: PointerEvent) => {
@@ -88,7 +99,16 @@ export function RoomContents({
       }}
       className="overflow-visible rounded-xl border bg-white shadow-card"
     >
-      <div className="grid grid-cols-[minmax(0,1fr)_9rem_6rem_7rem_2.5rem] gap-4 rounded-t-xl border-b bg-slate-50 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+      <div className={`grid ${gridColumns} gap-4 rounded-t-xl border-b bg-slate-50 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500`}>
+        {selectable && (
+          <input
+            type="checkbox"
+            checked={allSelected}
+            onChange={() => onToggleAll?.(items)}
+            aria-label="Select all items on this page"
+            className="h-4 w-4 rounded border-slate-300 text-brand focus:ring-brand"
+          />
+        )}
         <span>Name</span>
         <span>Type</span>
         <span>Size</span>
@@ -113,8 +133,18 @@ export function RoomContents({
           onDrop={(event) => {
             if (allowFileMoves && item.kind === 'folder' && draggedFileId) dropOn(event, item.id);
           }}
-          className={`grid cursor-pointer grid-cols-[minmax(0,1fr)_9rem_6rem_7rem_2.5rem] items-center gap-4 border-b px-5 py-3.5 last:rounded-b-xl last:border-0 ${dropTargetId === item.id ? 'bg-blue-100 ring-1 ring-inset ring-blue-300' : 'hover:bg-blue-50/50'} ${allowFileMoves && item.kind === 'file' ? 'cursor-grab active:cursor-grabbing' : ''}`}
+          className={`grid cursor-pointer ${gridColumns} items-center gap-4 border-b px-5 py-3.5 last:rounded-b-xl last:border-0 ${dropTargetId === item.id ? 'bg-blue-100 ring-1 ring-inset ring-blue-300' : selectedItemIds?.has(item.id) ? 'bg-blue-50' : 'hover:bg-blue-50/50'} ${allowFileMoves && item.kind === 'file' ? 'cursor-grab active:cursor-grabbing' : ''}`}
         >
+          {selectable && (
+            <input
+              type="checkbox"
+              checked={selectedItemIds?.has(item.id)}
+              onClick={(event) => event.stopPropagation()}
+              onChange={() => onToggleItem?.(item)}
+              aria-label={`Select ${item.name}`}
+              className="h-4 w-4 rounded border-slate-300 text-brand focus:ring-brand"
+            />
+          )}
           <button
             title={`Open ${item.name}`}
             onClick={(event) => {
