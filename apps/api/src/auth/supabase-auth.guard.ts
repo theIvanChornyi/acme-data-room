@@ -18,12 +18,23 @@ export class SupabaseAuthGuard implements CanActivate {
       });
       const { data, error } = await supabase.auth.getUser(token);
       if (error || !data.user.email) throw new UnauthorizedException();
+      const email = data.user.email.toLowerCase();
       await this.prisma.user.upsert({
         where: { id: data.user.id },
-        update: { email: data.user.email.toLowerCase() },
-        create: { id: data.user.id, email: data.user.email.toLowerCase() },
+        update: { email },
+        create: { id: data.user.id, email },
       });
-      request.user = { id: data.user.id, email: data.user.email };
+      await this.prisma.share.updateMany({
+        where: {
+          accessType: 'USER',
+          recipientId: null,
+          recipientEmail: email,
+          revokedAt: null,
+          OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+        },
+        data: { recipientId: data.user.id },
+      });
+      request.user = { id: data.user.id, email };
       return true;
     } catch {
       throw new UnauthorizedException('Invalid or expired session');

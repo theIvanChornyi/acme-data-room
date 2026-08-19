@@ -71,9 +71,9 @@ export class DataRoomsService {
     await this.assertOwner(roomId, ownerId);
     return this.prisma.share.findMany({
       where: { dataRoomId: roomId, ...this.shareTargetWhere(dto), accessType: 'USER', revokedAt: null },
-      select: { id: true, createdAt: true, recipient: { select: { email: true } } },
+      select: { id: true, createdAt: true, recipientId: true, recipientEmail: true, recipient: { select: { email: true } } },
       orderBy: { createdAt: 'desc' },
-    }).then((shares) => shares.map((share) => ({ id: share.id, email: share.recipient?.email ?? '', createdAt: share.createdAt })));
+    }).then((shares) => shares.map((share) => ({ id: share.id, email: share.recipient?.email ?? share.recipientEmail ?? '', pending: !share.recipientId, createdAt: share.createdAt })));
   }
 
   async grantUserShare(roomId: string, ownerId: string, dto: GrantUserShareDto) {
@@ -81,16 +81,21 @@ export class DataRoomsService {
     await this.assertShareTarget(roomId, dto);
     const email = dto.email.trim().toLowerCase();
     const recipient = await this.prisma.user.findUnique({ where: { email }, select: { id: true } });
-    if (!recipient) throw new BadRequestException('This person must sign in with Google before you can grant access');
-    if (recipient.id === ownerId) throw new BadRequestException('The owner already has access to this Data Room');
-    const where = { dataRoomId: roomId, ...this.shareTargetWhere(dto), accessType: 'USER' as const, recipientId: recipient.id, revokedAt: null };
+    if (recipient?.id === ownerId) throw new BadRequestException('The owner already has access to this Data Room');
+    const where = {
+      dataRoomId: roomId,
+      ...this.shareTargetWhere(dto),
+      accessType: 'USER' as const,
+      revokedAt: null,
+      OR: recipient ? [{ recipientId: recipient.id }, { recipientEmail: email }] : [{ recipientEmail: email }],
+    };
     const existing = await this.prisma.share.findFirst({ where, select: { id: true, createdAt: true } });
-    if (existing) return { ...existing, email };
+    if (existing) return { ...existing, email, pending: !recipient };
     const share = await this.prisma.share.create({
-      data: { dataRoomId: roomId, targetType: dto.targetType, accessType: 'USER', role: 'VIEWER', recipientId: recipient.id, folderId: dto.targetType === 'FOLDER' ? dto.folderId : null, fileId: dto.targetType === 'FILE' ? dto.fileId : null },
+      data: { dataRoomId: roomId, targetType: dto.targetType, accessType: 'USER', role: 'VIEWER', recipientId: recipient?.id, recipientEmail: email, folderId: dto.targetType === 'FOLDER' ? dto.folderId : null, fileId: dto.targetType === 'FILE' ? dto.fileId : null },
       select: { id: true, createdAt: true },
     });
-    return { ...share, email };
+    return { ...share, email, pending: !recipient };
   }
 
   async revokeUserShare(roomId: string, ownerId: string, shareId: string) {
@@ -271,18 +276,10 @@ export class DataRoomsService {
         });
         if (uploadError) throw new InternalServerErrorException('Unable to upload file to storage');
         pendingStoragePath = storagePath;
-        const name = await this.nextAvailableName(roomId, folderId, this.cleanFileName(file.originalname));
-        try {
-          const created = await this.prisma.file.create({
-            data: { id, dataRoomId: roomId, folderId: folderId ?? null, name, storagePath, mimeType: 'application/pdf', sizeBytes: BigInt(file.size) },
-          });
-          result.push({ ...created, sizeBytes: created.sizeBytes.toString() });
-        } catch (error) {
-          await this.storage().storage.from(this.storageBucket).remove([storagePath]);
-          pendingStoragePath = undefined;
-          if (this.isUniqueError(error)) throw new ConflictException('A file with this name was uploaded at the same time. Please try again.');
-          throw error;
-        }
+        const created = await this.withAvailableFileName(roomId, folderId, this.cleanFileName(file.originalname), undefined, (name) => this.prisma.file.create({
+          data: { id, dataRoomId: roomId, folderId: folderId ?? null, name, storagePath, mimeType: 'application/pdf', sizeBytes: BigInt(file.size) },
+        }));
+        result.push({ ...created, sizeBytes: created.sizeBytes.toString() });
         pendingStoragePath = undefined;
       }
       return result;
@@ -310,8 +307,7 @@ export class DataRoomsService {
     await this.assertOwner(roomId, ownerId);
     const file = await this.prisma.file.findFirst({ where: { id: fileId, dataRoomId: roomId } });
     if (!file) throw new NotFoundException('File not found');
-    const resolvedName = await this.nextAvailableName(roomId, file.folderId, this.cleanFileName(name), file.id);
-    const renamed = await this.prisma.file.update({ where: { id: file.id }, data: { name: resolvedName } });
+    const renamed = await this.withAvailableFileName(roomId, file.folderId, this.cleanFileName(name), file.id, (resolvedName) => this.prisma.file.update({ where: { id: file.id }, data: { name: resolvedName } }));
     await this.touchRoom(roomId);
     return { ...renamed, sizeBytes: renamed.sizeBytes.toString() };
   }
@@ -325,8 +321,7 @@ export class DataRoomsService {
       if (!folder) throw new NotFoundException('Destination folder not found');
     }
     const destination = destinationFolderId ?? null;
-    const name = await this.nextAvailableName(roomId, destination, file.name, file.id);
-    const moved = await this.prisma.file.update({ where: { id: file.id }, data: { folderId: destination, name } });
+    const moved = await this.withAvailableFileName(roomId, destination, file.name, file.id, (name) => this.prisma.file.update({ where: { id: file.id }, data: { folderId: destination, name } }));
     await this.touchRoom(roomId);
     return { ...moved, sizeBytes: moved.sizeBytes.toString() };
   }
@@ -337,17 +332,16 @@ export class DataRoomsService {
     await this.assertOwner(destinationRoomId, ownerId);
     const file = await this.prisma.file.findFirst({ where: { id: fileId, dataRoomId: roomId } });
     if (!file) throw new NotFoundException('File not found');
-    const name = await this.nextAvailableName(destinationRoomId, null, file.name);
     const storagePath = `${destinationRoomId}/root/${crypto.randomUUID()}.pdf`;
     const { error: storageError } = await this.storage().storage.from(this.storageBucket).move(file.storagePath, storagePath);
     if (storageError) throw new InternalServerErrorException('Unable to move file in private storage');
     try {
-      const moved = await this.prisma.$transaction(async (transaction) => {
+      const moved = await this.withAvailableFileName(destinationRoomId, null, file.name, undefined, (name) => this.prisma.$transaction(async (transaction) => {
         const updated = await transaction.file.update({ where: { id: file.id }, data: { dataRoomId: destinationRoomId, folderId: null, name, storagePath } });
         await transaction.share.updateMany({ where: { fileId: file.id }, data: { dataRoomId: destinationRoomId } });
         await transaction.dataRoom.updateMany({ where: { id: { in: [roomId, destinationRoomId] } }, data: { updatedAt: new Date() } });
         return updated;
-      });
+      }));
       return { ...moved, sizeBytes: moved.sizeBytes.toString() };
     } catch (error) {
       await this.storage().storage.from(this.storageBucket).move(storagePath, file.storagePath);
@@ -499,6 +493,18 @@ export class DataRoomsService {
       if (!match) return name;
     }
     throw new ConflictException('Too many files with the same name in this folder');
+  }
+
+  private async withAvailableFileName<T>(roomId: string, folderId: string | null | undefined, original: string, excludedFileId: string | undefined, action: (name: string) => Promise<T>) {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const name = await this.nextAvailableName(roomId, folderId, original, excludedFileId);
+      try {
+        return await action(name);
+      } catch (error) {
+        if (!this.isUniqueError(error)) throw error;
+      }
+    }
+    throw new ConflictException('Unable to resolve a concurrent file name conflict. Please try again.');
   }
 
   private isUniqueError(error: unknown): boolean {

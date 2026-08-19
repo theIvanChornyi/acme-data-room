@@ -55,7 +55,7 @@ pnpm dev
 
 Open `http://localhost:5173`. The Nest API listens at `http://localhost:3000/api`.
 
-For permissioned sharing, the recipient must first sign in to the app once with Google or email/password. This creates the minimal internal user record used to match a grant by email; no service-role key is ever sent to the browser.
+Permissioned sharing can be granted to any email address. If the recipient has not registered yet, the invitation is marked pending and is automatically attached to their account on first Google or email/password sign-in; no service-role key is ever sent to the browser.
 
 ## Deployment
 
@@ -92,7 +92,7 @@ erDiagram
   DataRoom { string id PK string ownerId FK string name }
   Folder { string id PK string parentId FK string path int depth }
   File { string id PK string folderId FK string storagePath bigint sizeBytes }
-  Share { string id PK string targetType string accessType string recipientId FK string token string role string description datetime revokedAt }
+  Share { string id PK string targetType string accessType string recipientId FK string recipientEmail string token string role string description datetime revokedAt }
 ```
 
 `Folder.path` is a materialized path such as `/folder-a/folder-b/`. `Share.targetType` identifies whether `folderId`, `fileId`, or the Data Room itself is the scope. `Share.accessType` distinguishes `PUBLIC_LINK` from a permissioned `USER` grant; `Share.role` is already an enum with `VIEWER` and `EDITOR`.

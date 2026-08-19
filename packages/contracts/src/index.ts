@@ -44,6 +44,7 @@ export interface PublicShareContents extends FolderContents {
 export interface UserShare {
   id: string;
   email: string;
+  pending: boolean;
   createdAt: string;
 }
 

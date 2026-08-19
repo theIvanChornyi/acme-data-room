@@ -100,6 +100,7 @@ model Share {
   targetType  ShareTargetType
   accessType  ShareAccessType
   recipientId String?
+  recipientEmail String?
   token       String?         @unique
   description String?
   role        ShareRole       @default(VIEWER)
@@ -113,5 +114,6 @@ model Share {
   recipient User?    @relation("SharedWithUser", fields: [recipientId], references: [id], onDelete: Cascade)
 
   @@index([recipientId, revokedAt])
+  @@index([recipientEmail, revokedAt])
   @@index([token, revokedAt])
 }
