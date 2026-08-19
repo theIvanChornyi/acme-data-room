@@ -19,6 +19,7 @@ A full-stack virtual Data Room MVP for securely organizing, viewing, downloading
 - Create, rename, and delete Data Rooms.
 - Nested folders with breadcrumbs, a lazy-loaded collapsible tree sidebar, rename, deletion warning, subtree deletion, and cursor-paginated folder listings with page controls.
 - PDF uploads: picker or drag-and-drop, up to 10 files and 25 MB per file, direct-to-storage upload with individual progress, collision-safe names.
+- Debounced Data Room-wide file-name search with cursor pagination; it starts at three characters to keep broad substring searches responsive.
 - File preview inside the app, download, rename, delete, and drag-and-drop moves between folders or Data Rooms.
 - Public links for a Data Room, folder, or individual file; every link is read-only, supports an optional description, and can be revoked.
 - Permissioned read-only sharing for a specific Google account. The recipient sees shared items in **Shared with me** and has no access above a shared folder in the hierarchy.
@@ -109,7 +110,7 @@ For small and medium folders, aggregate `COUNT(*)` and `SUM(sizeBytes)` for file
 
 ### One Data Room with 100,000 files
 
-Never fetch every file in a folder. The API lists only direct children in stable folder-first order with a keyset cursor (`kind`, `name`, `id`) and a bounded page size of 50 by default (100 maximum). The UI exposes Previous/Next and numbered controls for already visited cursor pages. Matching `(dataRoomId, parentId/folderId, name, id)` B-tree indexes support both the scope predicate and cursor comparison. The sidebar fetches only root folders initially and fetches each branch when it is expanded; the full folder-options list is requested only when the Move dialog opens. Search should be server-side, data-room scoped, debounced, and backed by a trigram/GIN index. Upload/deletion fan-out and stats reconciliation move to idempotent background jobs backed by an outbox.
+Never fetch every file in a folder. The API lists only direct children in stable folder-first order with a keyset cursor (`kind`, `name`, `id`) and a bounded page size of 50 by default (100 maximum). The UI exposes Previous/Next and numbered controls for already visited cursor pages. Matching `(dataRoomId, parentId/folderId, name, id)` B-tree indexes support both the scope predicate and cursor comparison. The sidebar fetches only root folders initially and fetches each branch when it is expanded; the full folder-options list is requested only when the Move dialog opens. File-name search is server-side, debounced, Data Room-scoped, and cursor-paginated; a `pg_trgm` GIN index makes three-or-more-character substring queries scalable. Upload/deletion fan-out and stats reconciliation move to idempotent background jobs backed by an outbox.
 
 ### Extending sharing to viewer/editor roles
 
