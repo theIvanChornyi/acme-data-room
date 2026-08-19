@@ -1,0 +1,16 @@
+{
+  "name": "acme-data-room",
+  "private": true,
+  "packageManager": "pnpm@10.9.0",
+  "scripts": {
+    "dev": "pnpm --parallel --filter @acme/web --filter @acme/api dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "format": "prettier --write .",
+    "db:generate": "pnpm --filter @acme/api prisma:generate",
+    "db:migrate": "pnpm --filter @acme/api prisma:migrate"
+  },
+  "devDependencies": {
+    "prettier": "^3.5.3"
+  }
+}
