@@ -1,8 +1,10 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, UploadedFiles, UseGuards, UseInterceptors } from '@nestjs/common';
+import { FilesInterceptor } from '@nestjs/platform-express';
 import { CurrentUser, AuthenticatedUser } from '../auth/current-user.decorator';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 import { CreateDataRoomDto } from './dto/create-data-room.dto';
 import { CreateFolderDto } from './dto/create-folder.dto';
+import { UploadFilesDto } from './dto/upload-files.dto';
 import { DataRoomsService } from './data-rooms.service';
 
 @Controller('data-rooms')
@@ -19,4 +21,22 @@ export class DataRoomsController {
 
   @Post(':roomId/folders')
   createFolder(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Body() dto: CreateFolderDto) { return this.dataRooms.createFolder(roomId, user.id, dto); }
+
+  @Post(':roomId/files')
+  @UseInterceptors(FilesInterceptor('files', 10, { limits: { fileSize: 25 * 1024 * 1024 } }))
+  uploadFiles(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Body() dto: UploadFilesDto, @UploadedFiles() files: UploadFile[] = []) {
+    return this.dataRooms.uploadFiles(roomId, user.id, dto.folderId, files);
+  }
+
+  @Get(':roomId/files/:fileId/view')
+  viewFile(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Param('fileId') fileId: string) {
+    return this.dataRooms.createViewUrl(roomId, user.id, fileId);
+  }
+}
+
+interface UploadFile {
+  originalname: string;
+  mimetype: string;
+  size: number;
+  buffer: Buffer;
 }

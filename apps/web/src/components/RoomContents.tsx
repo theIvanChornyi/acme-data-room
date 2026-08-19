@@ -4,9 +4,11 @@ import { ChevronRight, FileText, Folder, MoreHorizontal } from 'lucide-react';
 export function RoomContents({
   items,
   onOpenFolder,
+  onOpenFile,
 }: {
   items: RoomItem[];
   onOpenFolder: (id: string) => void;
+  onOpenFile: (id: string) => void;
 }) {
   return (
     <div className="overflow-hidden rounded-xl border bg-white shadow-card">
@@ -16,7 +18,7 @@ export function RoomContents({
       {items.map((item) => (
         <button
           key={item.id}
-          onClick={() => item.kind === 'folder' && onOpenFolder(item.id)}
+          onClick={() => item.kind === 'folder' ? onOpenFolder(item.id) : onOpenFile(item.id)}
           className="grid w-full grid-cols-[minmax(0,1fr)_9rem_7rem_2.5rem] items-center gap-4 border-b px-5 py-3.5 text-left last:border-0 hover:bg-blue-50/50"
         >
           <span className="flex min-w-0 items-center gap-3 font-medium">

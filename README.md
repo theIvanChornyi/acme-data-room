@@ -16,6 +16,7 @@ A secure virtual Data Room MVP for organizing and sharing acquisition due-dilige
 - Creating rooms, root folders, and arbitrarily nested folders.
 - Folder content listing with ordered files/folders and breadcrumb navigation.
 - Unique names are enforced per parent folder; a duplicate folder produces a clear error.
+- PDF upload: drag-and-drop or file picker, up to 10 files at a time, 25 MB each, individual progress, private Supabase Storage, and expiring viewing URLs.
 - API validates input and verifies Supabase access tokens server-side before any owner action.
 
 The foundation intentionally does not show controls for flows that are not implemented yet; upload is the next implementation step.
