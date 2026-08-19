@@ -70,6 +70,7 @@ model Folder {
 
   @@unique([dataRoomId, parentId, name])
   @@index([dataRoomId, parentId, name])
+  @@index([dataRoomId, parentId, name, id])
   @@index([dataRoomId, path])
 }
 
@@ -90,6 +91,7 @@ model File {
 
   @@unique([dataRoomId, folderId, name])
   @@index([dataRoomId, folderId, name])
+  @@index([dataRoomId, folderId, name, id])
 }
 
 model Share {

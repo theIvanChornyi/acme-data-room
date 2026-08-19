@@ -6,6 +6,7 @@ import { CreateDataRoomDto } from './dto/create-data-room.dto';
 import { CreateFolderDto } from './dto/create-folder.dto';
 import { CreatePublicShareDto } from './dto/create-public-share.dto';
 import { GrantUserShareDto } from './dto/grant-user-share.dto';
+import { ContentsQueryDto } from './dto/contents-query.dto';
 
 @Injectable()
 export class DataRoomsService {
@@ -36,9 +37,9 @@ export class DataRoomsService {
     return { deleted: { files: files.length } };
   }
 
-  async contents(roomId: string, ownerId: string, folderId?: string) {
+  async contents(roomId: string, ownerId: string, dto: ContentsQueryDto) {
     await this.assertOwner(roomId, ownerId);
-    return this.roomContents(roomId, folderId);
+    return this.roomContents(roomId, dto);
   }
 
   async listPublicShares(roomId: string, ownerId: string, dto: CreatePublicShareDto) {
@@ -115,38 +116,38 @@ export class DataRoomsService {
     return shares.map((share) => ({ id: share.id, targetType: share.targetType, targetName: share.folder?.name ?? share.file?.name ?? share.dataRoom.name, roomName: share.dataRoom.name, sharedBy: share.dataRoom.owner.email, createdAt: share.createdAt }));
   }
 
-  async publicContents(token: string, folderId?: string) {
+  async publicContents(token: string, dto: ContentsQueryDto) {
     const share = await this.activePublicShare(token);
     if (share.targetType === 'FILE') {
       if (!share.file) throw new NotFoundException('This shared file is unavailable');
-      return { room: { name: share.dataRoom.name, description: share.dataRoom.description }, shareDescription: share.description, scopeName: share.file.name, targetType: 'FILE', folder: null, breadcrumbs: [], items: [{ ...share.file, kind: 'file', sizeBytes: share.file.sizeBytes.toString() }] };
+      return { room: { name: share.dataRoom.name, description: share.dataRoom.description }, shareDescription: share.description, scopeName: share.file.name, targetType: 'FILE', folder: null, breadcrumbs: [], items: [{ ...share.file, parentId: share.file.folderId, kind: 'file', sizeBytes: share.file.sizeBytes.toString() }], nextCursor: null };
     }
     const sharedFolder = share.targetType === 'FOLDER' ? share.folder : null;
     if (share.targetType === 'FOLDER' && !sharedFolder) throw new NotFoundException('This shared folder is unavailable');
-    const requestedFolderId = folderId ?? sharedFolder?.id;
+    const requestedFolderId = dto.folderId ?? sharedFolder?.id;
     if (sharedFolder && requestedFolderId) {
       const requested = await this.prisma.folder.findFirst({ where: { id: requestedFolderId, dataRoomId: share.dataRoomId, path: { startsWith: sharedFolder.path } }, select: { id: true } });
       if (!requested) throw new NotFoundException('This folder is outside the shared area');
     }
-    const contents = await this.roomContents(share.dataRoomId, requestedFolderId);
+    const contents = await this.roomContents(share.dataRoomId, { ...dto, folderId: requestedFolderId });
     const breadcrumbs = sharedFolder ? contents.breadcrumbs.slice(Math.max(contents.breadcrumbs.findIndex((crumb) => crumb.id === sharedFolder.id) + 1, 0)) : contents.breadcrumbs;
     return { room: { name: share.dataRoom.name, description: share.dataRoom.description }, shareDescription: share.description, scopeName: sharedFolder?.name ?? share.dataRoom.name, targetType: share.targetType, ...contents, breadcrumbs };
   }
 
-  async userShareContents(shareId: string, recipientId: string, folderId?: string) {
+  async userShareContents(shareId: string, recipientId: string, dto: ContentsQueryDto) {
     const share = await this.activeUserShare(shareId, recipientId);
     if (share.targetType === 'FILE') {
       if (!share.file) throw new NotFoundException('This shared file is unavailable');
-      return { room: { name: share.dataRoom.name, description: share.dataRoom.description }, shareDescription: null, scopeName: share.file.name, targetType: 'FILE', folder: null, breadcrumbs: [], items: [{ ...share.file, kind: 'file', sizeBytes: share.file.sizeBytes.toString() }] };
+      return { room: { name: share.dataRoom.name, description: share.dataRoom.description }, shareDescription: null, scopeName: share.file.name, targetType: 'FILE', folder: null, breadcrumbs: [], items: [{ ...share.file, parentId: share.file.folderId, kind: 'file', sizeBytes: share.file.sizeBytes.toString() }], nextCursor: null };
     }
     const sharedFolder = share.targetType === 'FOLDER' ? share.folder : null;
     if (share.targetType === 'FOLDER' && !sharedFolder) throw new NotFoundException('This shared folder is unavailable');
-    const requestedFolderId = folderId ?? sharedFolder?.id;
+    const requestedFolderId = dto.folderId ?? sharedFolder?.id;
     if (sharedFolder && requestedFolderId) {
       const requested = await this.prisma.folder.findFirst({ where: { id: requestedFolderId, dataRoomId: share.dataRoomId, path: { startsWith: sharedFolder.path } }, select: { id: true } });
       if (!requested) throw new NotFoundException('This folder is outside the shared area');
     }
-    const contents = await this.roomContents(share.dataRoomId, requestedFolderId);
+    const contents = await this.roomContents(share.dataRoomId, { ...dto, folderId: requestedFolderId });
     const breadcrumbs = sharedFolder ? contents.breadcrumbs.slice(Math.max(contents.breadcrumbs.findIndex((crumb) => crumb.id === sharedFolder.id) + 1, 0)) : contents.breadcrumbs;
     return { room: { name: share.dataRoom.name, description: share.dataRoom.description }, shareDescription: null, scopeName: sharedFolder?.name ?? share.dataRoom.name, targetType: share.targetType, ...contents, breadcrumbs };
   }
@@ -181,18 +182,16 @@ export class DataRoomsService {
     return this.createStorageUrl(file.storagePath, true);
   }
 
-  private async roomContents(roomId: string, folderId?: string) {
+  private async roomContents(roomId: string, dto: ContentsQueryDto) {
+    const folderId = dto.folderId;
     let folder: { id: string; name: string; parentId: string | null; path: string } | null = null;
     if (folderId) {
       folder = await this.prisma.folder.findFirst({ where: { id: folderId, dataRoomId: roomId }, select: { id: true, name: true, parentId: true, path: true } });
       if (!folder) throw new NotFoundException('Folder not found');
     }
-    const [folders, files] = await this.prisma.$transaction([
-      this.prisma.folder.findMany({ where: { dataRoomId: roomId, parentId: folderId ?? null }, orderBy: { name: 'asc' } }),
-      this.prisma.file.findMany({ where: { dataRoomId: roomId, folderId: folderId ?? null }, orderBy: { name: 'asc' } }),
-    ]);
+    const { items, nextCursor } = await this.listDirectChildren(roomId, folderId ?? null, dto.cursor, dto.limit ?? 50);
     const breadcrumbs = folder ? await this.breadcrumbs(roomId, folder) : [];
-    return { folder: folder && { id: folder.id, name: folder.name, parentId: folder.parentId }, breadcrumbs, items: [...folders.map((f) => ({ ...f, kind: 'folder' })), ...files.map((f) => ({ ...f, kind: 'file', sizeBytes: f.sizeBytes.toString() }))] };
+    return { folder: folder && { id: folder.id, name: folder.name, parentId: folder.parentId }, breadcrumbs, items, nextCursor };
   }
 
   async createFolder(roomId: string, ownerId: string, dto: CreateFolderDto) {
@@ -437,6 +436,62 @@ export class DataRoomsService {
     const { data, error } = await this.storage().storage.from(this.storageBucket).createSignedUrl(storagePath, 10 * 60, download ? { download: true } : undefined);
     if (error || !data) throw new NotFoundException('The stored file is no longer available');
     return { url: data.signedUrl, expiresIn: 600 };
+  }
+
+  private async listDirectChildren(roomId: string, folderId: string | null, cursorInput: string | undefined, requestedLimit: number) {
+    const cursor = this.decodeContentsCursor(cursorInput);
+    const limit = Math.min(Math.max(requestedLimit, 1), 100);
+    const folderWhere = {
+      dataRoomId: roomId,
+      parentId: folderId,
+      ...(cursor?.kind === 'folder' ? { OR: [{ name: { gt: cursor.name } }, { name: cursor.name, id: { gt: cursor.id } }] } : {}),
+    };
+
+    if (cursor?.kind !== 'file') {
+      const folders = await this.prisma.folder.findMany({ where: folderWhere, orderBy: [{ name: 'asc' }, { id: 'asc' }], take: limit + 1 });
+      const visibleFolders = folders.slice(0, limit);
+      if (folders.length > limit) {
+        return { items: visibleFolders.map((folder) => ({ ...folder, kind: 'folder' as const })), nextCursor: this.encodeContentsCursor({ kind: 'folder', name: visibleFolders.at(-1)!.name, id: visibleFolders.at(-1)!.id }) };
+      }
+
+      const remaining = limit - visibleFolders.length;
+      const files = await this.prisma.file.findMany({ where: { dataRoomId: roomId, folderId }, orderBy: [{ name: 'asc' }, { id: 'asc' }], take: remaining + 1 });
+      const visibleFiles = files.slice(0, remaining);
+      const items = [
+        ...visibleFolders.map((folder) => ({ ...folder, kind: 'folder' as const })),
+        ...visibleFiles.map(({ folderId: parentId, sizeBytes, ...file }) => ({ ...file, parentId, kind: 'file' as const, sizeBytes: sizeBytes.toString() })),
+      ];
+      const lastItem = items.at(-1);
+      const nextCursor = files.length > remaining
+        ? this.encodeContentsCursor({ kind: lastItem?.kind ?? 'folder', name: lastItem?.name ?? '', id: lastItem?.id ?? '' })
+        : null;
+      return { items, nextCursor };
+    }
+
+    const files = await this.prisma.file.findMany({
+      where: { dataRoomId: roomId, folderId, OR: [{ name: { gt: cursor.name } }, { name: cursor.name, id: { gt: cursor.id } }] },
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
+      take: limit + 1,
+    });
+    const visibleFiles = files.slice(0, limit);
+    const items = visibleFiles.map(({ folderId: parentId, sizeBytes, ...file }) => ({ ...file, parentId, kind: 'file' as const, sizeBytes: sizeBytes.toString() }));
+    const lastFile = visibleFiles.at(-1);
+    return { items, nextCursor: files.length > limit && lastFile ? this.encodeContentsCursor({ kind: 'file', name: lastFile.name, id: lastFile.id }) : null };
+  }
+
+  private encodeContentsCursor(cursor: { kind: 'folder' | 'file'; name: string; id: string }) {
+    return Buffer.from(JSON.stringify(cursor)).toString('base64url');
+  }
+
+  private decodeContentsCursor(cursor: string | undefined): { kind: 'folder' | 'file'; name: string; id: string } | null {
+    if (!cursor) return null;
+    try {
+      const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as { kind?: unknown; name?: unknown; id?: unknown };
+      if ((parsed.kind !== 'folder' && parsed.kind !== 'file') || typeof parsed.name !== 'string' || !parsed.name || parsed.name.length > 180 || typeof parsed.id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(parsed.id)) throw new Error('Invalid cursor');
+      return { kind: parsed.kind, name: parsed.name, id: parsed.id };
+    } catch {
+      throw new BadRequestException('Invalid page cursor');
+    }
   }
 
   private async ensureBucket() {

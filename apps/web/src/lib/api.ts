@@ -27,12 +27,20 @@ async function publicRequest<T>(path: string): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+function contentsQuery(folderId?: string, cursor?: string) {
+  const query = new URLSearchParams();
+  if (folderId) query.set('folderId', folderId);
+  if (cursor) query.set('cursor', cursor);
+  const serialized = query.toString();
+  return serialized ? `?${serialized}` : '';
+}
+
 export const api = {
   rooms: () => request<DataRoomSummary[]>('/data-rooms'),
   createRoom: (name: string, description?: string) => request<DataRoomSummary>('/data-rooms', { method: 'POST', body: JSON.stringify({ name, description }) }),
   renameRoom: (roomId: string, name: string, description?: string) => request<DataRoomSummary>(`/data-rooms/${roomId}`, { method: 'PATCH', body: JSON.stringify({ name, description }) }),
   deleteRoom: (roomId: string) => request(`/data-rooms/${roomId}`, { method: 'DELETE' }),
-  contents: (roomId: string, folderId?: string) => request<FolderContents>(`/data-rooms/${roomId}/contents${folderId ? `?folderId=${folderId}` : ''}`),
+  contents: (roomId: string, folderId?: string, cursor?: string) => request<FolderContents>(`/data-rooms/${roomId}/contents${contentsQuery(folderId, cursor)}`),
   publicShares: (roomId: string, target: PublicShareTarget) => request<PublicShare[]>(`/data-rooms/${roomId}/shares/public?${new URLSearchParams(target).toString()}`),
   createPublicShare: (roomId: string, target: PublicShareTarget, description?: string) => request<PublicShare>(`/data-rooms/${roomId}/shares/public`, { method: 'POST', body: JSON.stringify({ ...target, description }) }),
   revokePublicShare: (roomId: string, shareId: string) => request(`/data-rooms/${roomId}/shares/public/${shareId}`, { method: 'DELETE' }),
@@ -70,11 +78,11 @@ export const api = {
   moveFile: (roomId: string, fileId: string, folderId: string | null) => request(`/data-rooms/${roomId}/files/${fileId}/move`, { method: 'PATCH', body: JSON.stringify({ folderId }) }),
   moveFileToRoom: (roomId: string, fileId: string, destinationRoomId: string) => request(`/data-rooms/${roomId}/files/${fileId}/move-to-room`, { method: 'PATCH', body: JSON.stringify({ destinationRoomId }) }),
   deleteFile: (roomId: string, fileId: string) => request(`/data-rooms/${roomId}/files/${fileId}`, { method: 'DELETE' }),
-  publicContents: (token: string, folderId?: string) => publicRequest<PublicShareContents>(`/public/shares/${token}/contents${folderId ? `?folderId=${folderId}` : ''}`),
+  publicContents: (token: string, folderId?: string, cursor?: string) => publicRequest<PublicShareContents>(`/public/shares/${token}/contents${contentsQuery(folderId, cursor)}`),
   publicViewFile: (token: string, fileId: string) => publicRequest<{ url: string }>(`/public/shares/${token}/files/${fileId}/view`),
   publicDownloadFile: (token: string, fileId: string) => publicRequest<{ url: string }>(`/public/shares/${token}/files/${fileId}/download`),
   sharedWithMe: () => request<ReceivedShare[]>('/data-rooms/shared-with-me'),
-  sharedWithMeContents: (shareId: string, folderId?: string) => request<PublicShareContents>(`/data-rooms/shared-with-me/${shareId}/contents${folderId ? `?folderId=${folderId}` : ''}`),
+  sharedWithMeContents: (shareId: string, folderId?: string, cursor?: string) => request<PublicShareContents>(`/data-rooms/shared-with-me/${shareId}/contents${contentsQuery(folderId, cursor)}`),
   sharedWithMeViewFile: (shareId: string, fileId: string) => request<{ url: string }>(`/data-rooms/shared-with-me/${shareId}/files/${fileId}/view`),
   sharedWithMeDownloadFile: (shareId: string, fileId: string) => request<{ url: string }>(`/data-rooms/shared-with-me/${shareId}/files/${fileId}/download`),
 };

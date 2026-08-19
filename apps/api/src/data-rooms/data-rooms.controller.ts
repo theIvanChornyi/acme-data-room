@@ -10,6 +10,7 @@ import { RenameItemDto } from './dto/rename-item.dto';
 import { MoveFileToRoomDto } from './dto/move-file-to-room.dto';
 import { CreatePublicShareDto } from './dto/create-public-share.dto';
 import { GrantUserShareDto } from './dto/grant-user-share.dto';
+import { ContentsQueryDto } from './dto/contents-query.dto';
 import { DataRoomsService } from './data-rooms.service';
 
 @Controller('data-rooms')
@@ -28,7 +29,7 @@ export class DataRoomsController {
   deleteRoom(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string) { return this.dataRooms.deleteRoom(roomId, user.id); }
 
   @Get(':roomId/contents')
-  contents(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Query('folderId') folderId?: string) { return this.dataRooms.contents(roomId, user.id, folderId); }
+  contents(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Query() dto: ContentsQueryDto) { return this.dataRooms.contents(roomId, user.id, dto); }
 
   @Get(':roomId/shares/public')
   listPublicShares(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Query() dto: CreatePublicShareDto) { return this.dataRooms.listPublicShares(roomId, user.id, dto); }
@@ -52,7 +53,7 @@ export class DataRoomsController {
   sharedWithMe(@CurrentUser() user: AuthenticatedUser) { return this.dataRooms.sharedWithMe(user.id); }
 
   @Get('shared-with-me/:shareId/contents')
-  sharedWithMeContents(@CurrentUser() user: AuthenticatedUser, @Param('shareId') shareId: string, @Query('folderId') folderId?: string) { return this.dataRooms.userShareContents(shareId, user.id, folderId); }
+  sharedWithMeContents(@CurrentUser() user: AuthenticatedUser, @Param('shareId') shareId: string, @Query() dto: ContentsQueryDto) { return this.dataRooms.userShareContents(shareId, user.id, dto); }
 
   @Get('shared-with-me/:shareId/files/:fileId/view')
   sharedWithMeView(@CurrentUser() user: AuthenticatedUser, @Param('shareId') shareId: string, @Param('fileId') fileId: string) { return this.dataRooms.createUserShareViewUrl(shareId, user.id, fileId); }

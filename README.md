@@ -17,7 +17,7 @@ A full-stack virtual Data Room MVP for securely organizing, viewing, downloading
 
 - Google OAuth plus email/password sign-up and sign-in, with owner-isolated Data Rooms.
 - Create, rename, and delete Data Rooms.
-- Nested folders with breadcrumbs, collapsible tree sidebar, rename, deletion warning, and subtree deletion.
+- Nested folders with breadcrumbs, collapsible tree sidebar, rename, deletion warning, subtree deletion, and cursor-paginated folder listings with page controls.
 - PDF uploads: picker or drag-and-drop, up to 10 files and 25 MB per file, individual upload progress, collision-safe names.
 - File preview inside the app, download, rename, delete, and drag-and-drop moves between folders or Data Rooms.
 - Public links for a Data Room, folder, or individual file; every link is read-only, supports an optional description, and can be revoked.
@@ -105,7 +105,7 @@ For small and medium folders, aggregate `COUNT(*)` and `SUM(sizeBytes)` for file
 
 ### One Data Room with 100,000 files
 
-Never fetch the entire tree. List only direct children with cursor/keyset pagination (`name`, `id`) and a matching `(dataRoomId, folderId, name, id)` index. Keep folders and files independently paginated (or migrate to a unified `Node` table if mixed ordering becomes a bottleneck). Search should be server-side, data-room scoped, debounced, and backed by a trigram/GIN index. Upload/deletion fan-out and stats reconciliation move to idempotent background jobs backed by an outbox.
+Never fetch every file in a folder. The API lists only direct children in stable folder-first order with a keyset cursor (`kind`, `name`, `id`) and a bounded page size of 50 by default (100 maximum). The UI exposes Previous/Next and numbered controls for already visited cursor pages. Matching `(dataRoomId, parentId/folderId, name, id)` B-tree indexes support both the scope predicate and cursor comparison. The folder tree is a separate metadata query; at high folder counts, make it lazy-loaded by expanded parent. Search should be server-side, data-room scoped, debounced, and backed by a trigram/GIN index. Upload/deletion fan-out and stats reconciliation move to idempotent background jobs backed by an outbox.
 
 ### Extending sharing to viewer/editor roles
 
