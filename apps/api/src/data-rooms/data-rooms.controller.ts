@@ -11,6 +11,7 @@ import { MoveFileToRoomDto } from './dto/move-file-to-room.dto';
 import { CreatePublicShareDto } from './dto/create-public-share.dto';
 import { GrantUserShareDto } from './dto/grant-user-share.dto';
 import { ContentsQueryDto } from './dto/contents-query.dto';
+import { ListFoldersDto } from './dto/list-folders.dto';
 import { DataRoomsService } from './data-rooms.service';
 
 @Controller('data-rooms')
@@ -65,7 +66,10 @@ export class DataRoomsController {
   createFolder(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Body() dto: CreateFolderDto) { return this.dataRooms.createFolder(roomId, user.id, dto); }
 
   @Get(':roomId/folders')
-  listFolders(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string) { return this.dataRooms.listFolders(roomId, user.id); }
+  listFolders(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Query() dto: ListFoldersDto) { return this.dataRooms.listFolders(roomId, user.id, dto.parentId); }
+
+  @Get(':roomId/folder-options')
+  listFolderOptions(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string) { return this.dataRooms.listFolderOptions(roomId, user.id); }
 
   @Patch(':roomId/folders/:folderId')
   renameFolder(@CurrentUser() user: AuthenticatedUser, @Param('roomId') roomId: string, @Param('folderId') folderId: string, @Body() dto: RenameItemDto) { return this.dataRooms.renameFolder(roomId, user.id, folderId, dto.name); }

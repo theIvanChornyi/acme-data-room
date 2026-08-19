@@ -210,9 +210,19 @@ export class DataRoomsService {
     }
   }
 
-  async listFolders(roomId: string, ownerId: string) {
+  async listFolders(roomId: string, ownerId: string, parentId?: string) {
     await this.assertOwner(roomId, ownerId);
-    return this.prisma.folder.findMany({ where: { dataRoomId: roomId }, select: { id: true, name: true, parentId: true, depth: true, path: true }, orderBy: { path: 'asc' } });
+    const folders = await this.prisma.folder.findMany({
+      where: { dataRoomId: roomId, parentId: parentId ?? null },
+      select: { id: true, name: true, parentId: true, depth: true, children: { select: { id: true }, take: 1 } },
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
+    });
+    return folders.map(({ children, ...folder }) => ({ ...folder, hasChildren: children.length > 0 }));
+  }
+
+  async listFolderOptions(roomId: string, ownerId: string) {
+    await this.assertOwner(roomId, ownerId);
+    return this.prisma.folder.findMany({ where: { dataRoomId: roomId }, select: { id: true, name: true, parentId: true, depth: true }, orderBy: { path: 'asc' } });
   }
 
   async renameFolder(roomId: string, ownerId: string, folderId: string, name: string) {
@@ -320,6 +330,7 @@ export class DataRoomsService {
       if (!folder) throw new NotFoundException('Destination folder not found');
     }
     const destination = destinationFolderId ?? null;
+    if (file.folderId === destination) return { ...file, sizeBytes: file.sizeBytes.toString() };
     const moved = await this.withAvailableFileName(roomId, destination, file.name, file.id, (name) => this.prisma.file.update({ where: { id: file.id }, data: { folderId: destination, name } }));
     await this.touchRoom(roomId);
     return { ...moved, sizeBytes: moved.sizeBytes.toString() };
